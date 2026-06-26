@@ -33,5 +33,5 @@ fi
 source "$ROOT_DIR/venv/bin/activate"
 export PYTHONPATH="$ROOT_DIR"
 
-echo "Starting Fact Entry API + React on port $API_PORT"
+echo "Starting Recruiting Agent API + React on port $API_PORT"
 exec uvicorn app.api.main:app --host 0.0.0.0 --port "$API_PORT"

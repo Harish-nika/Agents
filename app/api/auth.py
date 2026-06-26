@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import APP_PASSWORD, APP_USERNAME
 
-JWT_SECRET = "fact-entry-recruiting-secret-change-in-production"
+JWT_SECRET = "recruiting-agent-secret-change-in-production"
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
 

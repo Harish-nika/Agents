@@ -17,7 +17,7 @@ const FORMATS = ["PDF", "Word (.docx)", "TXT", "JPG/PNG scans"]
 
 export const Route = createFileRoute("/_layout/upload")({
   component: UploadPage,
-  head: () => ({ meta: [{ title: "Upload — Recruiting agent RA1" }] }),
+  head: () => ({ meta: [{ title: "Upload — Recruiting Agent" }] }),
 })
 
 function UploadPage() {

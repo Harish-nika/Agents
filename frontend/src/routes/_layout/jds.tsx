@@ -19,7 +19,7 @@ const SENIORITY = ["Junior", "Mid", "Senior", "Lead", "Manager"]
 
 export const Route = createFileRoute("/_layout/jds")({
   component: JDsPage,
-  head: () => ({ meta: [{ title: "JDs — Recruiting agent RA1" }] }),
+  head: () => ({ meta: [{ title: "JDs — Recruiting Agent" }] }),
 })
 
 function JDsPage() {

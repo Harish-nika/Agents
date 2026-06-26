@@ -14,7 +14,7 @@ import { handleError } from "@/utils"
 
 export const Route = createFileRoute("/_layout/hr-questions")({
   component: HRQuestionsPage,
-  head: () => ({ meta: [{ title: "HR Questions — Recruiting agent RA1" }] }),
+  head: () => ({ meta: [{ title: "HR Questions — Recruiting Agent" }] }),
 })
 
 const CATEGORY_ORDER = ["education", "experience", "project", "timeline", "credential", "general"] as const

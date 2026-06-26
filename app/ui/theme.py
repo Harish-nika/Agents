@@ -3,7 +3,7 @@ import streamlit as st
 
 def apply_theme() -> None:
     st.set_page_config(
-        page_title="Fact Entry Recruiting Agent",
+        page_title="Recruiting Agent",
         page_icon="🎯",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -101,7 +101,7 @@ def render_header() -> None:
     st.markdown(
         """
         <div class="main-header">
-            <h1>Fact Entry Recruiting Agent</h1>
+            <h1>Recruiting Agent</h1>
             <p>AI-powered resume screening with local LLM intelligence</p>
         </div>
         """,

@@ -65,7 +65,7 @@ Requirements:
 
 
 def main() -> int:
-    print("=== E2E Test: Fact Entry Recruiting Agent ===\n")
+    print("=== E2E Test: Recruiting Agent ===\n")
 
     if not ollama_client.health_check():
         print("FAIL: Ollama is not reachable")

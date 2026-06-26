@@ -24,7 +24,7 @@ function DashboardPage() {
     <div className="flex flex-col gap-8">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground">Fact Entry Recruiting Agent overview</p>
+        <p className="text-muted-foreground">Recruiting Agent overview</p>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">

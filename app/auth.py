@@ -7,7 +7,7 @@ def require_auth() -> bool:
     if st.session_state.get("authenticated"):
         return True
 
-    st.markdown("### Sign in to Fact Entry Recruiting Agent")
+    st.markdown("### Sign in to Recruiting Agent")
     with st.form("login_form"):
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")

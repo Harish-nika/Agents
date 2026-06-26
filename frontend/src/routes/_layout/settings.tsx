@@ -19,7 +19,7 @@ import { handleError } from "@/utils"
 
 export const Route = createFileRoute("/_layout/settings")({
   component: SettingsPage,
-  head: () => ({ meta: [{ title: "Settings — Recruiting agent RA1" }] }),
+  head: () => ({ meta: [{ title: "Settings — Recruiting Agent" }] }),
 })
 
 function modeLabel(mode: GroqLlmMode, hasSaved: boolean) {

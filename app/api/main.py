@@ -20,7 +20,7 @@ FRONTEND_DIST = ROOT_DIR / "frontend" / "dist"
 def create_app() -> FastAPI:
     init_db()
     job_service.recover_stale_jobs()
-    app = FastAPI(title="Fact Entry Recruiting Agent", version="1.0.0")
+    app = FastAPI(title="Recruiting Agent", version="1.0.0")
 
     app.add_middleware(
         CORSMiddleware,

@@ -1,5 +1,5 @@
 [Unit]
-Description=Fact Entry Recruiting Agent
+Description=Recruiting Agent
 After=network-online.target
 Wants=network-online.target
 

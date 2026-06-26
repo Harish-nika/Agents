@@ -19,7 +19,7 @@ const schema = z.object({
 export const Route = createFileRoute("/login")({
   beforeLoad: () => { if (isLoggedIn()) throw redirect({ to: "/" }) },
   component: LoginPage,
-  head: () => ({ meta: [{ title: "Login — Recruiting agent RA1" }] }),
+  head: () => ({ meta: [{ title: "Login — Recruiting Agent" }] }),
 })
 
 function LoginPage() {
@@ -32,7 +32,7 @@ function LoginPage() {
       <Form {...form}>
         <form onSubmit={form.handleSubmit((d) => loginMutation.mutate(d, { onError: handleError.bind(null, showErrorToast) }))} className="flex flex-col gap-6">
           <div className="text-center">
-            <h1 className="text-2xl font-bold">Fact Entry Recruiting Agent</h1>
+            <h1 className="text-2xl font-bold">Recruiting Agent</h1>
             <p className="text-muted-foreground text-sm mt-1">Sign in to continue</p>
           </div>
           <FormField control={form.control} name="username" render={({ field }) => (

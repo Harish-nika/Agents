@@ -11,7 +11,10 @@ import useCustomToast from "@/hooks/useCustomToast"
 import { api } from "@/lib/api"
 import { handleError } from "@/utils"
 
-export const Route = createFileRoute("/_layout/results")({ component: ResultsPage })
+export const Route = createFileRoute("/_layout/results")({
+  component: ResultsPage,
+  head: () => ({ meta: [{ title: "Results — Recruiting Agent" }] }),
+})
 
 function scoreColor(score: number) {
   if (score >= 70) return "default"

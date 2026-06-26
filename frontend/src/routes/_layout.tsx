@@ -16,7 +16,7 @@ const NAV = [
 export const Route = createFileRoute("/_layout")({
   beforeLoad: () => { if (!isLoggedIn()) throw redirect({ to: "/login" }) },
   component: AppLayout,
-  head: () => ({ meta: [{ title: "Recruiting agent RA1" }] }),
+  head: () => ({ meta: [{ title: "Recruiting Agent" }] }),
 })
 
 function AppLayout() {
@@ -27,7 +27,7 @@ function AppLayout() {
     <div className="flex min-h-svh bg-background">
       <aside className="w-64 border-r bg-card flex flex-col shrink-0">
         <div className="p-5 border-b">
-          <h1 className="font-bold text-lg leading-tight">Fact Entry</h1>
+          <h1 className="font-bold text-lg leading-tight">Recruiting Agent</h1>
           <p className="text-xs text-muted-foreground">Recruiting Agent</p>
         </div>
         <nav className="flex-1 p-3 space-y-1">

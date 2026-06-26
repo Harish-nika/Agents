@@ -1,4 +1,4 @@
-# Agents — Fact Entry Recruiting ATS
+# Agents — Recruiting ATS
 
 AI-powered Applicant Tracking System for HR teams. Store job descriptions, upload resumes (including scanned PDFs), and get LLM-powered role-fit scoring with structured verification and suspicion detection.
 
@@ -118,7 +118,7 @@ cd frontend && npm run build
 
 ```bash
 bash deploy/install.sh
-sudo systemctl enable --now fact-entry-recruiting
+sudo systemctl enable --now recruiting-agent
 ```
 
 ---
