@@ -1,0 +1,16 @@
+[Unit]
+Description=Fact Entry Recruiting Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=harish
+WorkingDirectory=/home/harish/agents/ats_agent
+EnvironmentFile=/home/harish/agents/ats_agent/.env
+ExecStart=/home/harish/agents/ats_agent/deploy/start.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
