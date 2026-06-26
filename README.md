@@ -4,6 +4,8 @@ AI-powered Applicant Tracking System for HR teams. Store job descriptions, uploa
 
 **Stack:** FastAPI · React · SQLite · ChromaDB · Ollama (embeddings) · optional [Groq](https://groq.com) (fast LLM)
 
+**Repository:** [github.com/Harish-nika/Agents](https://github.com/Harish-nika/Agents)
+
 ---
 
 ## Features
@@ -17,10 +19,11 @@ AI-powered Applicant Tracking System for HR teams. Store job descriptions, uploa
 | **Scoring** | Technical / HR / overall fit with strengths and gaps |
 | **Suspicion + HR Qs** | Fraud flags and categorized verification questions |
 | **Agent Activity** | Live pipeline timeline during analysis |
+| **Dashboard charts** | Score distribution, role averages, verification gaps |
 
 ---
 
-## Quick start
+## Quick start (setup guide)
 
 ### 1. Clone
 
@@ -38,35 +41,30 @@ cd Agents
 ```bash
 ollama pull llama3.1:8b
 ollama pull nomic-embed-text
-# Optional fast local model for JD parse / normalize:
-ollama pull qwen2.5:0.5b
+ollama pull qwen2.5:0.5b   # optional — faster JD parse / normalize
 ```
 
-OCR (scanned resumes):
+OCR for scanned resumes (Debian/Ubuntu):
 
 ```bash
-sudo apt install tesseract-ocr poppler-utils   # Debian/Ubuntu
+sudo apt install tesseract-ocr poppler-utils
 ```
 
-### 3. Configure secrets (local only — never commit)
+### 3. Secrets (never commit)
 
 ```bash
 cp .env.example .env
 # Edit .env — set APP_PASSWORD at minimum
 ```
 
-| File | Purpose | Committed? |
-|------|---------|------------|
-| `.env` | App password, Ollama URLs, ports | **No** — gitignored |
-| `groq_key.txt` | Optional Groq API key file | **No** — gitignored |
-| `resumes/` | Real candidate PDFs for testing | **No** — gitignored |
+| File | Purpose | In git? |
+|------|---------|---------|
+| `.env` | Login password, Ollama URLs, ports | **No** |
+| `groq_key.txt` | Optional Groq API key | **No** |
+| `resumes/` | Real candidate files for local testing | **No** |
+| `data/` | SQLite DB, uploads, ChromaDB | **No** |
 
-**Groq (optional):** Sign up at [console.groq.com](https://console.groq.com), create an API key, then either:
-
-- Save it in the app under **Settings → Groq API key** (recommended), or
-- Create `groq_key.txt` in the project root (one line, gitignored)
-
-Groq speeds up verification, scoring, and suspicion LLM calls. Embeddings still use Ollama.
+**Groq (optional):** Get a key at [console.groq.com](https://console.groq.com), then save it in **Settings → Groq API key** in the app (recommended) or in `groq_key.txt` locally.
 
 ### 4. Install and run
 
@@ -82,39 +80,16 @@ export PYTHONPATH=$(pwd)
 uvicorn app.api.main:app --host 0.0.0.0 --port 8512
 ```
 
-Open `http://localhost:8512` — default login: username `hr`, password from `.env` (`APP_PASSWORD`).
+Open `http://localhost:8512` — login: `hr` / password from `.env` (`APP_PASSWORD`).
 
 ### 5. First use
 
-1. **Job Descriptions** — create or paste an active JD, then **Index** it
-2. **Upload** — add resumes (or put files in `resumes/` and run `python scripts/reimport_resumes.py`)
-3. **Results** — view scores; **HR Questions** — answer verification items
+1. **Job Descriptions** — create a JD, paste content, click **Save** then **Index**
+2. **Upload** — add resumes (or run `python scripts/reimport_resumes.py` with files in `resumes/`)
+3. **Dashboard** — charts and pipeline health
+4. **Results** — score comparison by role; **HR Questions** — verification queue
 
----
-
-## Development
-
-**API (reload):**
-
-```bash
-source venv/bin/activate
-export PYTHONPATH=$(pwd)
-uvicorn app.api.main:app --host 0.0.0.0 --port 8512 --reload
-```
-
-**React (hot reload):**
-
-```bash
-cd frontend && npm run dev   # http://localhost:5174 — proxies /api → :8512
-```
-
-**Production build after UI changes:**
-
-```bash
-cd frontend && npm run build
-```
-
-**Automated install (systemd):**
+### 6. Production (systemd)
 
 ```bash
 bash deploy/install.sh
@@ -123,22 +98,32 @@ sudo systemctl enable --now recruiting-agent
 
 ---
 
+## Development
+
+```bash
+# API with reload
+source venv/bin/activate && export PYTHONPATH=$(pwd)
+uvicorn app.api.main:app --host 0.0.0.0 --port 8512 --reload
+
+# React dev server (proxies /api → :8512)
+cd frontend && npm run dev
+```
+
+Rebuild UI after changes: `cd frontend && npm run build`
+
+---
+
 ## Project structure
 
 ```
 Agents/
-├── app/
-│   ├── api/              # FastAPI REST API
-│   ├── services/         # Scoring, verification, parsers, vector store
-│   └── db/models.py      # SQLite schema + migrations
-├── frontend/             # React UI (Vite + TanStack Router)
-├── deploy/               # systemd service, install scripts
-├── scripts/
-│   ├── e2e_test.py       # Full pipeline test
-│   ├── benchmark_resumes.py
-│   └── reimport_resumes.py   # Clear DB + analyze resumes/ folder
-├── resumes/              # Local test resumes (gitignored)
-├── data/                 # SQLite, ChromaDB, uploads (gitignored)
+├── app/api/              FastAPI REST API
+├── app/services/         Scoring, verification, parsers, vector store
+├── frontend/             React UI (Vite + TanStack Router + recharts)
+├── deploy/               systemd service, install scripts
+├── scripts/              e2e_test, benchmark_resumes, reimport_resumes
+├── resumes/              Local test resumes (gitignored)
+├── data/                 Runtime DB + uploads (gitignored)
 ├── .env.example
 └── requirements.txt
 ```
@@ -148,19 +133,12 @@ Agents/
 ## Analysis pipeline
 
 ```
-Upload → Parse → Normalize → Verify (structured + anomalies)
-      → Embed → Search JDs → Suspicion → Score → Save HR questions
+Upload → Parse → Normalize → Verify → Embed → Search JDs → Suspicion → Score → HR questions
 ```
-
-- **Verification gaps** always generate categorized HR questions
-- **Suspicion score ≥ 60** adds additional LLM probe questions
-- Duplicate emails on re-upload update the existing candidate
 
 ---
 
 ## Environment variables
-
-See `.env.example`. Key settings:
 
 | Variable | Description |
 |----------|-------------|
@@ -172,45 +150,21 @@ See `.env.example`. Key settings:
 
 ---
 
-## API
-
-Base: `http://localhost:8512/api/v1`  
-Auth: `POST /auth/login` → `Authorization: Bearer <token>`
-
-Interactive docs: `http://localhost:8512/docs`
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /candidates` | List candidates |
-| `POST /candidates/upload` | Upload resume |
-| `DELETE /candidates/{id}` | Delete one candidate + analyses |
-| `DELETE /candidates` | Clear all candidates |
-| `GET /hr-questions/grouped` | HR verification queue |
-| `POST /candidates/{id}/reassess-suspicion` | Re-run after HR answers |
-
----
-
 ## Testing
 
 ```bash
-source venv/bin/activate
-export PYTHONPATH=$(pwd)
-
-# End-to-end (no UI)
+source venv/bin/activate && export PYTHONPATH=$(pwd)
 python scripts/e2e_test.py
-
-# Score all files in resumes/ (uses saved Groq key if configured)
-python scripts/reimport_resumes.py
+python scripts/reimport_resumes.py   # clear + score resumes/ folder
 ```
 
 ---
 
-## Security notes
+## Security
 
-- **Do not commit** `.env`, `groq_key.txt`, or files under `resumes/`
-- Change `APP_PASSWORD` before any network exposure
-- Groq sends resume/JD text to Groq's API — use Ollama-only mode in Settings if data must stay fully local
-- Uploaded files are stored under `data/uploads/` (gitignored)
+- Do not commit `.env`, `groq_key.txt`, or `resumes/`
+- Change `APP_PASSWORD` before exposing on a network
+- Groq sends text to Groq's API — use Ollama-only in Settings for fully local inference
 
 ---
 
@@ -218,19 +172,15 @@ python scripts/reimport_resumes.py
 
 | Problem | Fix |
 |---------|-----|
-| Ollama offline | `curl http://127.0.0.1:11434/api/tags` — start Ollama |
-| Groq 429 rate limit | Space out uploads; app retries automatically |
-| No active JDs | Create and index a JD before uploading resumes |
-| OCR fails | Install `tesseract-ocr` and `poppler-utils` |
+| Ollama offline | `curl http://127.0.0.1:11434/api/tags` |
+| Groq 429 | Space out uploads; retries are automatic |
+| No results for a role filter | Candidates were scored against a different JD — use **All roles** or re-upload targeting that JD |
+| Duplicate roles in filter | Archive old JDs you no longer use |
 | Stale UI | `cd frontend && npm run build` then restart API |
-| Reset database | Stop app, delete `data/`, run `init_db()`, re-index JDs |
+| Reset DB | Delete `data/`, run `init_db()`, re-index JDs |
 
 ---
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
----
-
-**Repository:** [github.com/Harish-nika/Agents](https://github.com/Harish-nika/Agents)

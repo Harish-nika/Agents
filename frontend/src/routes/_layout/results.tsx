@@ -1,13 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { Loader2, Trash2 } from "lucide-react"
-import { useState } from "react"
+import { useMemo, useState } from "react"
+import {
+  RoleRankingTable,
+  RoleScoreComparisonChart,
+} from "@/components/analytics/CandidateCharts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
 import useCustomToast from "@/hooks/useCustomToast"
+import { comparisonForJd, dedupeCandidates, flattenAnalyses, jdOptionsFromAnalyses } from "@/lib/analytics"
 import { api } from "@/lib/api"
 import { handleError } from "@/utils"
 
@@ -31,7 +36,6 @@ function ResultsPage() {
     queryKey: ["candidates", "analyzed"],
     queryFn: () => api.candidates("analyzed"),
   })
-  const { data: jds } = useQuery({ queryKey: ["jds", "active"], queryFn: () => api.jds(true) })
 
   const deleteMut = useMutation({
     mutationFn: (id: number) => api.deleteCandidate(id),
@@ -55,28 +59,24 @@ function ResultsPage() {
     onError: handleError.bind(null, showErrorToast),
   })
 
-  const deduped = candidates?.reduce<typeof candidates>((acc, c) => {
-    const key = (c.email || c.name).toLowerCase()
-    const prev = acc.find((x) => (x.email || x.name).toLowerCase() === key)
-    if (!prev) {
-      acc.push(c)
-      return acc
-    }
-    const prevBest = prev.analyses[0]?.overall_score ?? 0
-    const curBest = c.analyses[0]?.overall_score ?? 0
-    if (curBest >= prevBest) {
-      const idx = acc.indexOf(prev)
-      acc[idx] = c
-    }
-    return acc
-  }, [])
+  const allRows = flattenAnalyses(candidates ?? [])
+  const jdOptions = jdOptionsFromAnalyses(candidates ?? [])
+  const roleFilterId: number | "all" = roleFilter === "all" ? "all" : Number(roleFilter)
+  const selectedJdLabel = jdOptions.find((j) => String(j.id) === roleFilter)?.label
 
-  const filtered = deduped?.filter((c) => {
-    const best = c.analyses[0]
-    if (!best || best.overall_score < minScore) return false
-    if (roleFilter !== "all" && String(best.jd_id) !== roleFilter) return false
-    return true
-  })
+  const filtered = useMemo(() => {
+    const deduped = dedupeCandidates(candidates ?? [])
+    return deduped.filter((c) => {
+      const match = c.analyses.find((a) => roleFilter === "all" || String(a.jd_id) === roleFilter)
+      if (!match || match.overall_score < minScore) return false
+      return true
+    })
+  }, [candidates, roleFilter, minScore])
+
+  const getDisplayAnalysis = (c: (typeof filtered)[0]) => {
+    if (roleFilter === "all") return c.analyses[0]
+    return c.analyses.find((a) => String(a.jd_id) === roleFilter) ?? c.analyses[0]
+  }
 
   const confirmDelete = (name: string, id: number) => {
     if (window.confirm(`Permanently delete "${name}" and all analysis results?`)) {
@@ -90,12 +90,15 @@ function ResultsPage() {
     }
   }
 
+  const hasAnalyses = allRows.length > 0
+  const comparisonCount = comparisonForJd(allRows, roleFilterId, minScore).length
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap justify-between items-start gap-4">
         <div>
           <h1 className="text-2xl font-bold">Analysis Results</h1>
-          <p className="text-muted-foreground">Candidate scores and role fit summaries</p>
+          <p className="text-muted-foreground">Candidate scores, role comparison, and fit summaries</p>
         </div>
         {(candidates?.length ?? 0) > 0 && (
           <Button
@@ -121,18 +124,38 @@ function ResultsPage() {
           <Slider value={[minScore]} onValueChange={([v]) => setMinScore(v)} max={100} step={5} />
         </div>
         <Select value={roleFilter} onValueChange={setRoleFilter}>
-          <SelectTrigger className="w-56"><SelectValue placeholder="Filter by role" /></SelectTrigger>
+          <SelectTrigger className="w-72"><SelectValue placeholder="Filter by analyzed role" /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All roles</SelectItem>
-            {jds?.map((jd) => <SelectItem key={jd.id} value={String(jd.id)}>{jd.role}</SelectItem>)}
+            <SelectItem value="all">All analyzed roles</SelectItem>
+            {jdOptions.map((jd) => (
+              <SelectItem key={jd.id} value={String(jd.id)}>{jd.label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
 
+      {hasAnalyses && comparisonCount > 0 && (
+        <div className="grid gap-4 lg:grid-cols-1">
+          <RoleScoreComparisonChart
+            rows={allRows}
+            jdId={roleFilterId}
+            minScore={minScore}
+            title={roleFilter === "all" ? "Score comparison — all roles" : `Score comparison — ${selectedJdLabel}`}
+          />
+          <RoleRankingTable rows={allRows} jdId={roleFilterId} minScore={minScore} />
+        </div>
+      )}
+
+      {hasAnalyses && comparisonCount === 0 && roleFilter !== "all" && (
+        <p className="text-sm text-amber-600 dark:text-amber-400 border border-amber-500/30 rounded-md p-3">
+          No candidates were analyzed against <strong>{selectedJdLabel}</strong>. Switch to <strong>All analyzed roles</strong> or re-upload resumes targeting that JD.
+        </p>
+      )}
+
       <div className="space-y-4">
         {isLoading && <p className="text-muted-foreground">Loading…</p>}
-        {filtered?.map((c) => {
-          const best = c.analyses[0]
+        {filtered.map((c) => {
+          const best = getDisplayAnalysis(c)
           if (!best) return null
           return (
             <Card key={c.id}>
@@ -205,7 +228,12 @@ function ResultsPage() {
             </Card>
           )
         })}
-        {!isLoading && filtered?.length === 0 && <p className="text-muted-foreground">No results match filters.</p>}
+        {!isLoading && filtered.length === 0 && !hasAnalyses && (
+          <p className="text-muted-foreground">No results yet. Upload resumes after creating a JD.</p>
+        )}
+        {!isLoading && filtered.length === 0 && hasAnalyses && (
+          <p className="text-muted-foreground">No results match the current filters.</p>
+        )}
       </div>
     </div>
   )
