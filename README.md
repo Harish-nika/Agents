@@ -12,6 +12,8 @@ Each agent lives in its own folder with its own README, dependencies, and deploy
 |--------|-------------|------|
 | [`recruiting-agent/`](recruiting-agent/) | AI-powered ATS — resume scoring, JD matching, HR verification | [Setup guide](recruiting-agent/README.md) |
 
+[![Recruiting Agent overview](recruiting-agent/docs/overview.png)](recruiting-agent/README.md)
+
 *More agents will be added here over time.*
 
 ---

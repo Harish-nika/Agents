@@ -1,4 +1,6 @@
-# Agents — Recruiting ATS
+# Recruiting Agent — AI-Powered ATS
+
+![Recruiting Agent — pipeline, dashboard, and tech stack](docs/overview.png)
 
 AI-powered Applicant Tracking System for HR teams. Store job descriptions, upload resumes (including scanned PDFs), and get LLM-powered role-fit scoring with structured verification and suspicion detection.
 
