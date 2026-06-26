@@ -25,6 +25,49 @@ AI-powered Applicant Tracking System for HR teams. Store job descriptions, uploa
 
 ---
 
+## Screenshots
+
+### Dashboard
+Pipeline health, score distribution, and top candidates.
+
+![Dashboard](docs/screenshots/dashboard_page.png)
+
+### Job descriptions
+Create roles, paste JD text, and index skills for vector search.
+
+![Job descriptions](docs/screenshots/jd_page.png)
+
+![JD parsing with LLM](docs/screenshots/jd_parsing_with_llm.png)
+
+### Upload resumes
+Bulk upload with optional target role; supports PDF, DOCX, scans, and images.
+
+![Upload resumes](docs/screenshots/upload_cv_for_analysis.png)
+
+### Agent activity
+Live pipeline timeline while resumes are parsed, verified, embedded, and scored.
+
+![Agent activity](docs/screenshots/agent_activity_bar.png)
+
+### Analysis results
+Per-candidate scores, role suitability comparison, verification gaps, and ranking.
+
+![Analysis results](docs/screenshots/analysis_result.png)
+
+![Verification and suspicion details](docs/screenshots/gap_sus_report.png)
+
+### HR questions
+Categorized verification questions with resume excerpts for recruiter follow-up.
+
+![HR questions](docs/screenshots/hr_question_page.png)
+
+### Settings
+Groq API key management for faster LLM scoring (optional; embeddings stay on Ollama).
+
+![Settings — Groq key](docs/screenshots/settings_key_managment.png)
+
+---
+
 ## Quick start (setup guide)
 
 ### 1. Clone
