@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router"
 import { Briefcase, HelpCircle, TrendingUp, Users } from "lucide-react"
 import {
   AvgScoreByRoleChart,
+  RoleSuitabilityMatrix,
   ScoreDistributionChart,
   TopCandidatesChart,
   VerificationGapsChart,
@@ -74,6 +75,7 @@ function DashboardPage() {
           <ScoreDistributionChart rows={rows} />
           <TopCandidatesChart rows={rows} />
           <AvgScoreByRoleChart rows={rows} />
+          {candidates && candidates.length > 0 && <RoleSuitabilityMatrix candidates={candidates} />}
           {candidates && candidates.length > 0 && <VerificationGapsChart candidates={candidates} />}
         </div>
       ) : (

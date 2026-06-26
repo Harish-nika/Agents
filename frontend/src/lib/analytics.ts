@@ -125,6 +125,35 @@ export function comparisonForJd(rows: ScoreRow[], jdId: number | "all", minScore
     .sort((a, b) => b.overall - a.overall)
 }
 
+export function bestFitByCandidate(candidates: import("@/lib/api").Candidate[]): Map<number, ScoreRow> {
+  const map = new Map<number, ScoreRow>()
+  for (const row of flattenAnalyses(candidates)) {
+    const prev = map.get(row.candidateId)
+    if (!prev || row.overall > prev.overall) map.set(row.candidateId, row)
+  }
+  return map
+}
+
+export function roleMatrix(
+  candidates: import("@/lib/api").Candidate[],
+): { candidate: string; [role: string]: string | number }[] {
+  const rows = flattenAnalyses(candidates)
+  const roles = [...new Set(rows.map((r) => r.jdRole))].sort()
+  const byCandidate = new Map<number, { name: string; scores: Map<string, number> }>()
+  for (const r of rows) {
+    const cur = byCandidate.get(r.candidateId) ?? { name: shortName(r.name, 18), scores: new Map() }
+    cur.scores.set(r.jdRole, Math.round(r.overall))
+    byCandidate.set(r.candidateId, cur)
+  }
+  return [...byCandidate.values()].map(({ name, scores }) => {
+    const row: { candidate: string; [key: string]: string | number } = { candidate: name }
+    for (const role of roles) {
+      row[role] = scores.get(role) ?? 0
+    }
+    return row
+  })
+}
+
 export function shortName(name: string, max = 14): string {
   if (name.length <= max) return name
   const parts = name.split(" ")

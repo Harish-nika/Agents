@@ -19,6 +19,7 @@ import {
   shortName,
   topCandidates,
   verificationGapTotals,
+  roleMatrix,
   type ScoreRow,
 } from "@/lib/analytics"
 import type { Candidate } from "@/lib/api"
@@ -176,6 +177,42 @@ export function RoleScoreComparisonChart({
             <Bar dataKey="overall" name="Overall" fill={BAR_COLORS[0]} radius={[2, 2, 0, 0]} />
             <Bar dataKey="technical" name="Technical" fill={BAR_COLORS[1]} radius={[2, 2, 0, 0]} />
             <Bar dataKey="hr" name="HR fit" fill={BAR_COLORS[2]} radius={[2, 2, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </CardContent>
+    </Card>
+  )
+}
+
+export function RoleSuitabilityMatrix({ candidates }: { candidates: Candidate[] }) {
+  const data = roleMatrix(candidates)
+  if (data.length < 1) return null
+  const roles = Object.keys(data[0]).filter((k) => k !== "candidate")
+  if (roles.length < 2) return null
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium">Candidate × role suitability</CardTitle>
+        <p className="text-xs text-muted-foreground">Overall score per JD — highest bar = best fit</p>
+      </CardHeader>
+      <CardContent className="h-[280px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+            <XAxis dataKey="candidate" tick={{ fontSize: 10 }} />
+            <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} width={28} />
+            <Tooltip content={<ChartTooltip />} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            {roles.map((role, i) => (
+              <Bar
+                key={role}
+                dataKey={role}
+                name={role.length > 18 ? `${role.slice(0, 16)}…` : role}
+                fill={BAR_COLORS[i % BAR_COLORS.length]}
+                radius={[2, 2, 0, 0]}
+              />
+            ))}
           </BarChart>
         </ResponsiveContainer>
       </CardContent>

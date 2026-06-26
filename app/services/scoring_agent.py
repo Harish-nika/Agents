@@ -196,18 +196,17 @@ class ScoringAgent:
             target_jd = session.query(JobDescription).filter(JobDescription.id == target_jd_id).first()
             if target_jd:
                 matches = [{"jd_id": target_jd.id, "title": target_jd.title, "role": target_jd.role, "similarity": 1.0}]
-        elif not matches:
-            matches = [
-                {
-                    "jd_id": jd.id,
-                    "title": jd.title,
-                    "role": jd.role,
-                    "similarity": 0.0,
-                }
-                for jd in active_jds[:TOP_K_JDS]
-            ]
         else:
-            matches = sorted(matches, key=lambda m: float(m.get("similarity", 0)), reverse=True)[:1]
+            by_id: dict[int, dict] = {int(m["jd_id"]): m for m in matches}
+            for jd in active_jds:
+                if jd.id not in by_id:
+                    by_id[jd.id] = {
+                        "jd_id": jd.id,
+                        "title": jd.title,
+                        "role": jd.role,
+                        "similarity": 0.0,
+                    }
+            matches = sorted(by_id.values(), key=lambda m: float(m.get("similarity", 0)), reverse=True)
 
         step("search")
         if job_id is not None:
@@ -223,7 +222,7 @@ class ScoringAgent:
         step("score")
         best_overall = 0.0
         recommended_role = ""
-        first_analysis_id: int | None = None
+        best_analysis_id: int | None = None
         best_jd_id: int | None = None
 
         for match in matches:
@@ -232,10 +231,6 @@ class ScoringAgent:
                 continue
 
             score = self._score_candidate(raw_text, jd, parse_note, verify_context)
-            if score.overall_score > best_overall:
-                best_overall = score.overall_score
-                recommended_role = score.recommended_role or jd.role
-                best_jd_id = jd.id
 
             analysis = AnalysisResult(
                 candidate_id=candidate.id,
@@ -257,14 +252,17 @@ class ScoringAgent:
             analysis.suspicion_flags_json = json.dumps(suspicion.flags)
             session.add(analysis)
             session.flush()
-            if first_analysis_id is None:
-                first_analysis_id = analysis.id
+            if score.overall_score >= best_overall:
+                best_overall = score.overall_score
+                recommended_role = score.recommended_role or jd.role
+                best_jd_id = jd.id
+                best_analysis_id = analysis.id
 
-        if first_analysis_id and (verification_report.anomalies or suspicion.hr_questions):
+        if best_analysis_id and (verification_report.anomalies or suspicion.hr_questions):
             _save_merged_hr_questions(
                 session,
                 candidate.id,
-                first_analysis_id,
+                best_analysis_id,
                 verification_report,
                 suspicion.hr_questions,
                 suspicion.suspicion_score,

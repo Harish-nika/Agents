@@ -121,12 +121,17 @@ function UploadPage() {
             <Select value={targetJd} onValueChange={setTargetJd}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All active roles</SelectItem>
+                <SelectItem value="all">All active roles (compare every JD)</SelectItem>
                 {jds?.map((jd) => (
                   <SelectItem key={jd.id} value={String(jd.id)}>{jd.role} — {jd.title}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground mt-1.5">
+              {targetJd === "all"
+                ? "Each resume is LLM-scored against every active JD — Results shows best-fit role and comparison bars."
+                : "Scores only against the selected JD."}
+            </p>
           </div>
 
           <div className="rounded-lg border border-dashed p-6 text-center space-y-3">

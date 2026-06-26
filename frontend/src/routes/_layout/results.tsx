@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { Loader2, Trash2 } from "lucide-react"
 import { useMemo, useState } from "react"
+import CandidateRoleFit from "@/components/analytics/CandidateRoleFit"
 import {
   RoleRankingTable,
   RoleScoreComparisonChart,
@@ -181,6 +182,7 @@ function ResultsPage() {
                     </Button>
                   </div>
                 </div>
+                <CandidateRoleFit analyses={c.analyses} />
                 <p className="text-sm mb-3">{best.fit_summary}</p>
                 {best.hr_verification_summary && (
                   <p className="text-sm mb-3 text-green-600 dark:text-green-400 border-l-2 border-green-500 pl-3">
