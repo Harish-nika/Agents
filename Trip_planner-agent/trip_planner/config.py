@@ -1,0 +1,155 @@
+"""Configuration for the trip planner ADK package."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT_DIR / ".env")
+
+MODEL_NAME = os.getenv("TRIP_PLANNER_MODEL", "gemini-3.6-flash")
+# Comma-separated Gemini fallbacks (never include retired models)
+_FALLBACK_RAW = os.getenv(
+    "TRIP_PLANNER_MODEL_FALLBACKS",
+    "gemini-flash-latest,gemini-2.0-flash",
+)
+MODEL_FALLBACKS = [m.strip() for m in _FALLBACK_RAW.split(",") if m.strip()]
+# Models Google has retired for new API keys — always skip
+_RETIRED_MODELS = {
+    "gemini-2.5-flash",
+    "models/gemini-2.5-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+}
+
+# Groq tool-capable chat models (ADK function calling). Compound systems do NOT
+# support tool calling — they are used via tools/compound_research.py (unlimited TPD).
+# Prefer Qwen 27B: gpt-oss reasoning_content breaks ADK multi-turn tool loops on Groq.
+GROQ_MODEL = os.getenv("GROQ_MODEL", "groq/qwen/qwen3.8-27b")
+_GROQ_FALLBACK_RAW = os.getenv(
+    "GROQ_MODEL_FALLBACKS",
+    "groq/openai/gpt-oss-20b",
+)
+GROQ_MODEL_FALLBACKS = [m.strip() for m in _GROQ_FALLBACK_RAW.split(",") if m.strip()]
+DEFAULT_USER_ID = os.getenv("TRIP_PLANNER_USER_ID", "adk_adventurer_001")
+APP_NAME = "trip_planner"
+HOST = os.getenv("TRIP_PLANNER_HOST", "0.0.0.0")
+PORT = int(os.getenv("TRIP_PLANNER_PORT", "8080"))
+
+os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "False")
+
+
+def sync_groq_api_key() -> str | None:
+    """Load Groq key from GROQ_API_KEY or grok_key alias into GROQ_API_KEY for LiteLLM."""
+    key = (
+        os.getenv("GROQ_API_KEY", "").strip()
+        or os.getenv("grok_key", "").strip()
+        or os.getenv("GROK_KEY", "").strip()
+    )
+    if not key or key.startswith("your_"):
+        return None
+    os.environ["GROQ_API_KEY"] = key
+    return key
+
+
+def get_groq_api_key() -> str | None:
+    return sync_groq_api_key()
+
+
+def _normalize_groq_id(name: str) -> str:
+    return name if name.startswith("groq/") else f"groq/{name}"
+
+
+def _litellm_model_id(mid: str) -> str:
+    """Map our model ids to LiteLLM ids.
+
+    Groq model ids that already contain a slash (e.g. ``openai/gpt-oss-20b``,
+    ``qwen/qwen3.8-27b``, ``groq/compound``) need an extra ``groq/`` provider
+    prefix so LiteLLM sends the full id to the Groq API.
+    """
+    if mid.startswith("groq/") and mid.count("/") >= 2:
+        # Already groq/<org>/<name> — LiteLLM provider + model path is correct
+        return mid
+    if mid in {"groq/compound", "groq/compound-mini"}:
+        return f"groq/{mid}"
+    return mid
+
+
+def model_candidates() -> list[str]:
+    """Primary Gemini → Gemini fallbacks → tool-capable Groq models (if key)."""
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def _add(name: str) -> None:
+        if not name or name in seen or name in _RETIRED_MODELS:
+            return
+        # Compound cannot be an ADK agent model (no tool calling)
+        if name in {"groq/compound", "groq/compound-mini"}:
+            return
+        seen.add(name)
+        out.append(name)
+
+    _add(MODEL_NAME)
+    for name in MODEL_FALLBACKS:
+        _add(name)
+    if get_groq_api_key():
+        for name in [GROQ_MODEL, *GROQ_MODEL_FALLBACKS]:
+            if name:
+                _add(_normalize_groq_id(name))
+    if not out:
+        out = ["gemini-3.6-flash"]
+    return out
+
+
+def tool_capable_model(preferred: str | None = None) -> str:
+    """Model for specialists — never Compound (no ADK tool calling)."""
+    mid = preferred or MODEL_NAME
+    if mid.startswith("groq/compound"):
+        for name in [MODEL_NAME, *MODEL_FALLBACKS]:
+            if name and name not in _RETIRED_MODELS:
+                return name
+        return "gemini-2.0-flash"
+    return mid
+
+
+def resolve_model(model_id: str | None = None):
+    """Return a model id string or LiteLlm wrapper for Groq/OpenAI-compatible providers."""
+    mid = model_id or MODEL_NAME
+    if mid.startswith("groq/") or mid.startswith("openai/") or mid.startswith("ollama/"):
+        sync_groq_api_key()
+        from google.adk.models.lite_llm import LiteLlm
+
+        return LiteLlm(model=_litellm_model_id(mid))
+    return mid
+
+
+def require_api_key() -> str:
+    """Return GOOGLE_API_KEY or raise a clear error.
+
+    Groq-only mode is allowed if a Groq key exists (Gemini optional then).
+    """
+    key = os.getenv("GOOGLE_API_KEY", "").strip()
+    if key and key != "your_api_key_here":
+        os.environ["GOOGLE_API_KEY"] = key
+        return key
+    if get_groq_api_key():
+        # Placeholder so ADK env checks that expect a key don't crash; Groq path uses LiteLLM.
+        return "groq-only"
+    raise RuntimeError(
+        "No LLM key set. Add GOOGLE_API_KEY and/or grok_key (Groq) in Settings / .env."
+    )
+
+
+def get_maps_api_key() -> str | None:
+    """Return GOOGLE_MAPS_API_KEY if configured."""
+    key = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
+    if not key or key == "your_maps_api_key_here":
+        return None
+    return key
+
+
+# Sync on import so LiteLLM sees the key even if stored as grok_key
+sync_groq_api_key()

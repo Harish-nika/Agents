@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trip Guide</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside id="tripSpine" class="panel spine" aria-label="Trip timeline">
+      <div class="panel-head">
+        <h2>Trip plan</h2>
+        <p id="spineDates" class="panel-sub">Dates appear as you chat</p>
+        <p id="spinePrefs" class="spine-prefs" hidden></p>
+      </div>
+      <ol id="spineList" class="spine-list">
+        <li class="spine-empty">Your stops will line up here.</li>
+      </ol>
+      <p id="spineNotes" class="spine-notes"></p>
+    </aside>
+
+    <div class="app">
+      <header class="header">
+        <div>
+          <h1>Trip Guide</h1>
+          <p class="tagline">Plan one step at a time — weather, places, food, stays, maps.</p>
+        </div>
+        <div class="header-actions">
+          <button type="button" id="settingsBtn" class="btn ghost">Settings</button>
+          <button type="button" id="newTrip" class="btn ghost">New trip</button>
+        </div>
+      </header>
+
+      <div id="keyBanner" class="banner hidden" role="status"></div>
+
+      <main id="thread" class="thread" aria-live="polite"></main>
+
+      <form id="chatForm" class="composer">
+        <textarea
+          id="message"
+          rows="2"
+          placeholder="e.g. Planning a trip to San Francisco March 20–22…"
+          required
+        ></textarea>
+        <button type="submit" class="btn primary" id="sendBtn">Send</button>
+      </form>
+    </div>
+
+    <aside id="mapPanel" class="panel map-panel" aria-label="Route map">
+      <div class="panel-head map-head">
+        <h2>Route map</h2>
+        <p class="panel-sub">Markers + driving line</p>
+      </div>
+      <div id="mapEmpty" class="map-empty">Your route will draw here as the plan fills in.</div>
+      <div id="map" class="map-canvas" role="application"></div>
+    </aside>
+  </div>
+
+  <nav class="mobile-tabs" aria-label="Panels">
+    <button type="button" class="tab-btn" data-panel="spine">Plan</button>
+    <button type="button" class="tab-btn active" data-panel="chat">Chat</button>
+    <button type="button" class="tab-btn" data-panel="map">Map</button>
+  </nav>
+
+  <div id="settingsModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel" role="dialog" aria-labelledby="settingsTitle">
+      <div class="modal-header">
+        <h2 id="settingsTitle">Settings</h2>
+        <button type="button" class="btn ghost" data-close>Close</button>
+      </div>
+      <p class="modal-help">
+        Keys are saved on this server in <code>.env</code>.
+        Gemini from
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">AI Studio</a>;
+        Groq fallback from
+        <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com</a>
+        (tool-capable models; unlimited Compound is used via research tool;
+        your <code>grok_key</code> is a Groq key).
+      </p>
+      <form id="settingsForm" class="settings-form">
+        <label>
+          Gemini API key <span class="opt">(preferred)</span>
+          <input
+            type="password"
+            id="googleApiKey"
+            name="google_api_key"
+            autocomplete="off"
+            placeholder="Paste Gemini API key"
+          />
+          <span id="geminiHint" class="hint"></span>
+        </label>
+        <label>
+          Groq API key <span class="opt">(fallback when Gemini is busy)</span>
+          <input
+            type="password"
+            id="groqApiKey"
+            name="groq_api_key"
+            autocomplete="off"
+            placeholder="gsk_… from console.groq.com"
+          />
+          <span id="groqHint" class="hint"></span>
+        </label>
+        <label>
+          Google Maps API key <span class="opt">(optional)</span>
+          <input
+            type="password"
+            id="mapsApiKey"
+            name="google_maps_api_key"
+            autocomplete="off"
+            placeholder="For detailed transit/driving steps"
+          />
+          <span id="mapsHint" class="hint"></span>
+        </label>
+        <p id="settingsStatus" class="settings-status" aria-live="polite"></p>
+        <div class="modal-actions">
+          <button type="submit" class="btn primary" id="saveSettings">Save keys</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZsMN4Jyq8KCz4u+oCUVjtvLvC+w="
+    crossorigin=""
+  ></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

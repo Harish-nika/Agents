@@ -11,10 +11,11 @@ Each agent lives in its own folder with its own README, dependencies, and deploy
 | Folder | Description | Docs |
 |--------|-------------|------|
 | [`recruiting-agent/`](recruiting-agent/) | AI-powered ATS — resume scoring, JD matching, HR verification | [Setup guide](recruiting-agent/README.md) |
+| [`Trip_planner-agent/`](Trip_planner-agent/) | Trip Guide — multi-agent travel chat, spine + map, free tools | [Setup guide](Trip_planner-agent/README.md) |
 
 [![Recruiting Agent overview](recruiting-agent/docs/overview.png)](recruiting-agent/README.md)
 
-*More agents will be added here over time.*
+[![Trip Guide UI](Trip_planner-agent/page1.png)](Trip_planner-agent/README.md)
 
 ---
 
@@ -30,6 +31,9 @@ Then open the agent you need:
 ```bash
 cd recruiting-agent
 # follow recruiting-agent/README.md
+
+cd ../Trip_planner-agent
+# follow Trip_planner-agent/README.md
 ```
 
 ---
