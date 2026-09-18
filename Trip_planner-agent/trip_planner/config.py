@@ -79,9 +79,18 @@ def _litellm_model_id(mid: str) -> str:
 
 
 def model_candidates() -> list[str]:
-    """Primary Gemini → Gemini fallbacks → tool-capable Groq models (if key)."""
+    """Primary Gemini → Gemini fallbacks → tool-capable Groq models (if key).
+
+    Set TRIP_PLANNER_SKIP_GEMINI=1 to use Groq only (useful when Gemini free
+    tier daily quota is exhausted).
+    """
     seen: set[str] = set()
     out: list[str] = []
+    skip_gemini = os.getenv("TRIP_PLANNER_SKIP_GEMINI", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
     def _add(name: str) -> None:
         if not name or name in seen or name in _RETIRED_MODELS:
@@ -92,14 +101,15 @@ def model_candidates() -> list[str]:
         seen.add(name)
         out.append(name)
 
-    _add(MODEL_NAME)
-    for name in MODEL_FALLBACKS:
-        _add(name)
+    if not skip_gemini:
+        _add(MODEL_NAME)
+        for name in MODEL_FALLBACKS:
+            _add(name)
     if get_groq_api_key():
         for name in [GROQ_MODEL, *GROQ_MODEL_FALLBACKS]:
             if name:
                 _add(_normalize_groq_id(name))
-    if not out:
+    if not out and not skip_gemini:
         out = ["gemini-3.6-flash"]
     return out
 

@@ -58,7 +58,13 @@ async def suggest_places(request: str, tool_context: ToolContext) -> str:
         tool_context: ADK tool context (injected).
     """
     print(f"TOOL CALLED: suggest_places(request='{request[:80]}...')")
-    data = web_search(f"best rated places to visit {request}", max_results=8)
+    # Prefer destination-focused queries — "best rated …" alone often hits dictionaries.
+    data = web_search(
+        f"{request} tourist attractions India",
+        max_results=8,
+    )
+    if data.get("status") != "success" or not data.get("results"):
+        data = web_search(request, max_results=8)
     return _card_from_search("Place ideas", "places", data)
 
 

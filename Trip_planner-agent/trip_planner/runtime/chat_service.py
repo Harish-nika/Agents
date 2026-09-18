@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -43,6 +44,8 @@ _TRANSIENT_MARKERS = (
     "TEMPORARILY",
     "TRY AGAIN LATER",
     "OVERLOADED",
+    "QUOTA",
+    "RATE_LIMIT",
 )
 
 _UNAVAILABLE_MODEL_MARKERS = (
@@ -64,6 +67,10 @@ _FRIENDLY_BUSY = (
     "please wait a few seconds and send your message once more."
 )
 
+# Cap how long we wait on one model before trying the next (Gemini free-tier
+# can sit in ADK/tenacity retries for many minutes otherwise).
+_MODEL_ATTEMPT_TIMEOUT_S = float(os.getenv("TRIP_PLANNER_MODEL_TIMEOUT_S", "50"))
+
 
 def _is_transient_error(text: str) -> bool:
     upper = (text or "").upper()
@@ -75,16 +82,41 @@ def _is_unavailable_model(text: str) -> bool:
     return any(marker in upper for marker in _UNAVAILABLE_MODEL_MARKERS)
 
 
+def _is_quota_error(text: str) -> bool:
+    upper = (text or "").upper()
+    return any(
+        m in upper
+        for m in (
+            "RESOURCE_EXHAUSTED",
+            "QUOTA EXCEEDED",
+            "EXCEEDED YOUR CURRENT QUOTA",
+            "FREE_TIER",
+            "GENERATE_CONTENT_FREE_TIER",
+        )
+    )
+
+
 def _should_try_next_model(text: str) -> bool:
     return _is_transient_error(text) or _is_unavailable_model(text)
 
 
 def _friendly_error(raw: str) -> str:
     upper = (raw or "").upper()
+    if _is_quota_error(raw):
+        return (
+            "Gemini free-tier quota is used up for today (multi-agent turns burn "
+            "several requests each). Wait for reset, or rely on Groq fallback "
+            "(grok_key) — then send your message again."
+        )
     if "RATE_LIMIT" in upper or "RATE LIMIT" in upper or "TOKENS PER MINUTE" in upper:
         return (
             "Groq rate limit hit for a moment. Wait ~30 seconds and send again — "
             "Trip Guide will keep using the specialist agents."
+        )
+    if "TIMEOUT" in upper:
+        return (
+            "A model took too long to respond, so I stopped waiting. "
+            "Please send your message once more (Groq may pick up if Gemini is slow)."
         )
     if _is_unavailable_model(raw):
         return (
@@ -160,17 +192,20 @@ class ChatService:
         activity: list[str] = []
         last_error = ""
         models = model_candidates()
+        skip_remaining_gemini = False
 
         yield {"type": "status", "label": "Thinking…", "session_id": client_sid}
 
         for index, model in enumerate(models):
-            if index > 0:
-                # Fresh ADK session so incomplete tool calls from a failed model
-                # do not poison Groq Compound (Missing tool results…).
+            is_groq = str(model).startswith("groq/")
+            if skip_remaining_gemini and not is_groq:
+                continue
+
+            if index > 0 or skip_remaining_gemini:
                 sid = await self._ensure_session(str(uuid.uuid4()), user_id)
                 label = (
                     f"Falling back to Groq ({model})…"
-                    if str(model).startswith("groq/")
+                    if is_groq
                     else f"Model busy — trying {model}…"
                 )
                 yield {
@@ -178,63 +213,104 @@ class ChatService:
                     "label": label,
                     "session_id": client_sid,
                 }
-                await asyncio.sleep(0.25 * index)
+                await asyncio.sleep(0.1)
 
             runner = self._runner_for(model)
             attempt_reply = ""
+            pending_status: list[str] = []
+            yield {
+                "type": "status",
+                "label": f"Running {model}…",
+                "session_id": client_sid,
+            }
+
+            async def _run_once() -> str:
+                text_out = ""
+                async for event in runner.run_async(
+                    user_id=user_id,
+                    session_id=sid,
+                    new_message=Content(parts=[Part(text=message)], role="user"),
+                ):
+                    for call in event.get_function_calls() or []:
+                        name = getattr(call, "name", None) or ""
+                        label = TOOL_STATUS_LABELS.get(
+                            name, f"Using {name or 'tool'}…"
+                        )
+                        if label not in activity:
+                            activity.append(label)
+                        pending_status.append(label)
+                    if (
+                        event.is_final_response()
+                        and event.content
+                        and event.content.parts
+                    ):
+                        text = event.content.parts[0].text
+                        if text:
+                            text_out = text
+                return text_out
+
             try:
-                # One retry only for soft empty replies; hard 503/404 skip immediately
-                max_attempts = 2
-                for attempt in range(max_attempts):
-                    if attempt > 0:
+                attempt_reply = await asyncio.wait_for(
+                    _run_once(), timeout=_MODEL_ATTEMPT_TIMEOUT_S
+                )
+                for label in pending_status:
+                    yield {
+                        "type": "status",
+                        "label": label,
+                        "session_id": client_sid,
+                    }
+
+                if attempt_reply and _should_try_next_model(attempt_reply):
+                    last_error = attempt_reply
+                    if _is_quota_error(attempt_reply) and not is_groq:
+                        skip_remaining_gemini = True
                         yield {
                             "type": "status",
-                            "label": "Still busy — retrying…",
+                            "label": "Gemini quota hit — switching to Groq…",
                             "session_id": client_sid,
                         }
-                        await asyncio.sleep(0.8)
-
-                    attempt_reply = ""
-                    async for event in runner.run_async(
-                        user_id=user_id,
-                        session_id=sid,
-                        new_message=Content(parts=[Part(text=message)], role="user"),
-                    ):
-                        for call in event.get_function_calls() or []:
-                            name = getattr(call, "name", None) or ""
-                            label = TOOL_STATUS_LABELS.get(
-                                name, f"Using {name or 'tool'}…"
-                            )
-                            if label not in activity:
-                                activity.append(label)
-                            yield {
-                                "type": "status",
-                                "label": label,
-                                "session_id": client_sid,
-                            }
-
-                        if event.is_final_response() and event.content and event.content.parts:
-                            text = event.content.parts[0].text
-                            if text:
-                                attempt_reply = text
-
-                    if attempt_reply and _should_try_next_model(attempt_reply):
-                        last_error = attempt_reply
-                        break  # next model; do not retry same id on 404/503 text
-                    if attempt_reply:
-                        reply = attempt_reply
-                        break
-                    last_error = "empty response"
-                else:
-                    if attempt_reply and not _should_try_next_model(attempt_reply):
-                        reply = attempt_reply
-                        break
                     continue
-
-                if reply and not _should_try_next_model(reply):
+                if attempt_reply:
+                    reply = attempt_reply
                     break
+                last_error = "empty response"
+                continue
+
+            except asyncio.TimeoutError:
+                last_error = (
+                    f"timeout after {_MODEL_ATTEMPT_TIMEOUT_S:.0f}s on {model}"
+                )
+                for label in pending_status:
+                    yield {
+                        "type": "status",
+                        "label": label,
+                        "session_id": client_sid,
+                    }
+                yield {
+                    "type": "status",
+                    "label": f"Timed out on {model} — trying next…",
+                    "session_id": client_sid,
+                }
+                if not is_groq:
+                    skip_remaining_gemini = True
+                continue
+
             except Exception as e:
                 last_error = str(e)
+                for label in pending_status:
+                    yield {
+                        "type": "status",
+                        "label": label,
+                        "session_id": client_sid,
+                    }
+                if _is_quota_error(last_error) and not is_groq:
+                    skip_remaining_gemini = True
+                    yield {
+                        "type": "status",
+                        "label": "Gemini quota hit — switching to Groq…",
+                        "session_id": client_sid,
+                    }
+                    continue
                 if _should_try_next_model(last_error):
                     continue
                 reply = _friendly_error(f"An error occurred: {e}")

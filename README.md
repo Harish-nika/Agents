@@ -15,7 +15,7 @@ Each agent lives in its own folder with its own README, dependencies, and deploy
 
 [![Recruiting Agent overview](recruiting-agent/docs/overview.png)](recruiting-agent/README.md)
 
-[![Trip Guide UI](Trip_planner-agent/page1.png)](Trip_planner-agent/README.md)
+[![Trip Guide UI](Trip_planner-agent/page_images/1.png)](Trip_planner-agent/README.md)
 
 ---
 
