@@ -12,11 +12,33 @@
   />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
-<body>
+<body data-theme="dark">
+  <div class="topbar">
+    <div class="topbar-brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <strong>Trip Guide</strong>
+      <span class="brand-sub">AI travel planning companion</span>
+    </div>
+    <nav class="topbar-nav" aria-label="Primary">
+      <span class="nav-link active">Plan</span>
+      <span class="nav-link soon" title="Coming soon">Explore <em>Soon</em></span>
+      <span class="nav-link soon" title="Coming soon">Saved <em>Soon</em></span>
+      <button type="button" class="nav-link btn-link" id="aboutBtn">About</button>
+    </nav>
+    <div class="topbar-actions">
+      <button type="button" id="themeToggle" class="btn ghost" title="Toggle theme">Theme</button>
+      <button type="button" id="settingsBtn" class="btn ghost">Settings</button>
+      <button type="button" id="newTrip" class="btn ghost">New trip</button>
+    </div>
+  </div>
+
   <div class="shell">
     <aside id="tripSpine" class="panel spine" aria-label="Trip timeline">
       <div class="panel-head">
-        <h2>Trip plan</h2>
+        <div class="panel-head-row">
+          <h2>Trip plan</h2>
+          <button type="button" id="editPrefsBtn" class="btn ghost tiny">Edit prefs</button>
+        </div>
         <p id="spineDates" class="panel-sub">Dates appear as you chat</p>
         <p id="spinePrefs" class="spine-prefs" hidden></p>
       </div>
@@ -32,15 +54,22 @@
           <h1>Trip Guide</h1>
           <p class="tagline">Plan one step at a time — weather, places, food, stays, maps.</p>
         </div>
-        <div class="header-actions">
-          <button type="button" id="settingsBtn" class="btn ghost">Settings</button>
-          <button type="button" id="newTrip" class="btn ghost">New trip</button>
-        </div>
       </header>
 
       <div id="keyBanner" class="banner hidden" role="status"></div>
 
       <main id="thread" class="thread" aria-live="polite"></main>
+
+      <section id="tripSummary" class="trip-summary hidden" aria-label="Trip summary">
+        <div class="summary-tabs" role="tablist">
+          <button type="button" class="summary-tab active" data-tab="overview">Overview</button>
+          <button type="button" class="summary-tab" data-tab="weather">Weather</button>
+          <button type="button" class="summary-tab" data-tab="places">Places</button>
+          <button type="button" class="summary-tab" data-tab="stays">Stays</button>
+          <button type="button" class="summary-tab" data-tab="route">Route</button>
+        </div>
+        <div id="summaryBody" class="summary-body"></div>
+      </section>
 
       <form id="chatForm" class="composer">
         <textarea
@@ -56,8 +85,9 @@
     <aside id="mapPanel" class="panel map-panel" aria-label="Route map">
       <div class="panel-head map-head">
         <h2>Route map</h2>
-        <p class="panel-sub">Markers + driving line</p>
+        <p class="panel-sub">Markers + driving line · Leaflet / OSM</p>
       </div>
+      <div id="mapHud" class="map-hud hidden" aria-live="polite"></div>
       <div id="mapEmpty" class="map-empty">Your route will draw here as the plan fills in.</div>
       <div id="map" class="map-canvas" role="application"></div>
     </aside>
@@ -81,47 +111,77 @@
         Gemini from
         <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">AI Studio</a>;
         Groq fallback from
-        <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com</a>
-        (tool-capable models; unlimited Compound is used via research tool;
-        your <code>grok_key</code> is a Groq key).
+        <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com</a>.
       </p>
       <form id="settingsForm" class="settings-form">
         <label>
           Gemini API key <span class="opt">(preferred)</span>
-          <input
-            type="password"
-            id="googleApiKey"
-            name="google_api_key"
-            autocomplete="off"
-            placeholder="Paste Gemini API key"
-          />
+          <input type="password" id="googleApiKey" name="google_api_key" autocomplete="off" placeholder="Paste Gemini API key" />
           <span id="geminiHint" class="hint"></span>
         </label>
         <label>
           Groq API key <span class="opt">(fallback when Gemini is busy)</span>
-          <input
-            type="password"
-            id="groqApiKey"
-            name="groq_api_key"
-            autocomplete="off"
-            placeholder="gsk_… from console.groq.com"
-          />
+          <input type="password" id="groqApiKey" name="groq_api_key" autocomplete="off" placeholder="gsk_… from console.groq.com" />
           <span id="groqHint" class="hint"></span>
         </label>
         <label>
           Google Maps API key <span class="opt">(optional)</span>
-          <input
-            type="password"
-            id="mapsApiKey"
-            name="google_maps_api_key"
-            autocomplete="off"
-            placeholder="For detailed transit/driving steps"
-          />
+          <input type="password" id="mapsApiKey" name="google_maps_api_key" autocomplete="off" placeholder="For detailed transit/driving steps" />
           <span id="mapsHint" class="hint"></span>
         </label>
         <p id="settingsStatus" class="settings-status" aria-live="polite"></p>
         <div class="modal-actions">
           <button type="submit" class="btn primary" id="saveSettings">Save keys</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="aboutModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-about></div>
+    <div class="modal-panel" role="dialog" aria-labelledby="aboutTitle">
+      <div class="modal-header">
+        <h2 id="aboutTitle">About Trip Guide</h2>
+        <button type="button" class="btn ghost" data-close-about>Close</button>
+      </div>
+      <p class="modal-help">
+        Multi-agent trip planner built with Google ADK. An orchestrator delegates to weather,
+        places, stays, and directions specialists. Free tools: Open-Meteo, DuckDuckGo/Wikipedia,
+        Leaflet/OSM, and OSRM. Gemini is primary; Groq is the failover.
+      </p>
+    </div>
+  </div>
+
+  <div id="prefsModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-prefs></div>
+    <div class="modal-panel" role="dialog" aria-labelledby="prefsTitle">
+      <div class="modal-header">
+        <h2 id="prefsTitle">Trip preferences</h2>
+        <button type="button" class="btn ghost" data-close-prefs>Close</button>
+      </div>
+      <form id="prefsForm" class="settings-form">
+        <label>
+          Budget
+          <input type="text" id="prefBudget" placeholder="budget / mid-range / luxury" />
+        </label>
+        <label>
+          Pace
+          <input type="text" id="prefPace" placeholder="chill / moderate / packed" />
+        </label>
+        <label>
+          Vibe
+          <input type="text" id="prefVibe" placeholder="relaxed coastal" />
+        </label>
+        <label>
+          Interests <span class="opt">(comma-separated)</span>
+          <input type="text" id="prefInterests" placeholder="beaches, temples, food" />
+        </label>
+        <label>
+          Companions
+          <input type="text" id="prefCompanions" placeholder="solo / couple / family" />
+        </label>
+        <div class="modal-actions">
+          <button type="submit" class="btn primary">Save prefs</button>
         </div>
       </form>
     </div>

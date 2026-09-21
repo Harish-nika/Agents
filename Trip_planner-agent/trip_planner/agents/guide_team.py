@@ -6,11 +6,13 @@ from google.adk.agents import Agent
 
 from trip_planner.config import MODEL_NAME, resolve_model
 from trip_planner.prompts.guide_specialists import (
+    DIRECTIONS_SPECIALIST_INSTRUCTION,
     PLACES_SPECIALIST_INSTRUCTION,
     STAYS_SPECIALIST_INSTRUCTION,
     WEATHER_SPECIALIST_INSTRUCTION,
 )
 from trip_planner.tools.compound_research import compound_research
+from trip_planner.tools.maps_directions import get_directions
 from trip_planner.tools.specialist_tools import (
     search_lodging,
     suggest_food,
@@ -47,4 +49,14 @@ def build_stays_specialist(model: str | None = None) -> Agent:
         description="Food and lodging suggestions when requested.",
         instruction=STAYS_SPECIALIST_INSTRUCTION,
         tools=[suggest_food, search_lodging, compound_research],
+    )
+
+
+def build_directions_specialist(model: str | None = None) -> Agent:
+    return Agent(
+        name="directions_specialist",
+        model=resolve_model(model or MODEL_NAME),
+        description="Driving or transit routes between trip stops.",
+        instruction=DIRECTIONS_SPECIALIST_INSTRUCTION,
+        tools=[get_directions],
     )

@@ -1,6 +1,6 @@
 # Trip Guide — Conversational Trip Planner (Google ADK)
 
-![Trip Guide — three-column UI with multi-stop Karnataka prompt](page_images/1.png)
+![Trip Guide — architecture, UI, and tech stack](page_images/tp_agent.png)
 
 Multi-agent travel assistant that understands multi-stop trips from natural language, updates a live **trip board + map**, and delegates climate / places / stays to specialist agents. Built for a mostly free stack (Open-Meteo, DuckDuckGo, OSM/OSRM, optional Groq).
 

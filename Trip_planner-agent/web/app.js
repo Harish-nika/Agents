@@ -1,4 +1,5 @@
 const STORAGE_KEY = "trip_guide_session_id";
+const THEME_KEY = "trip_guide_theme";
 
 const thread = document.getElementById("thread");
 const form = document.getElementById("chatForm");
@@ -21,6 +22,15 @@ const spineDates = document.getElementById("spineDates");
 const spineNotes = document.getElementById("spineNotes");
 const spinePrefs = document.getElementById("spinePrefs");
 const mapEmpty = document.getElementById("mapEmpty");
+const mapHud = document.getElementById("mapHud");
+const tripSummary = document.getElementById("tripSummary");
+const summaryBody = document.getElementById("summaryBody");
+const aboutBtn = document.getElementById("aboutBtn");
+const aboutModal = document.getElementById("aboutModal");
+const prefsModal = document.getElementById("prefsModal");
+const editPrefsBtn = document.getElementById("editPrefsBtn");
+const prefsForm = document.getElementById("prefsForm");
+const themeToggle = document.getElementById("themeToggle");
 const shell = document.querySelector(".shell");
 
 const tripState = {
@@ -31,6 +41,10 @@ const tripState = {
   endDate: "",
   notes: "",
   weatherByStop: {},
+  weatherCards: [],
+  placesLinks: [],
+  lodgingLinks: [],
+  mapCards: [],
   geometry: null,
 };
 
@@ -48,6 +62,14 @@ let markersLayer;
 let routeLayer;
 let geometryTimer = null;
 let markerByIndex = [];
+let activeSummaryTab = "overview";
+
+const ACTIVITY_SOURCES = [
+  { match: /climate|weather/i, source: "Open-Meteo", key: "climate" },
+  { match: /places|attractions|sightseeing/i, source: "DuckDuckGo", key: "places" },
+  { match: /food|stays|lodging|hotel/i, source: "DuckDuckGo", key: "stays" },
+  { match: /route|map|direction|geometry|driving/i, source: "OSRM", key: "route" },
+];
 
 function prefsStorageKey() {
   const sid = getSessionId();
@@ -147,6 +169,34 @@ function fmtTemp(v) {
   return `${Math.round(Number(v))}°`;
 }
 
+function formatDistanceKm(meters) {
+  if (meters == null || Number.isNaN(Number(meters))) return null;
+  const km = Number(meters) / 1000;
+  if (km < 10) return `${km.toFixed(1)} km`;
+  return `${Math.round(km).toLocaleString()} km`;
+}
+
+function formatDurationHours(seconds) {
+  if (seconds == null || Number.isNaN(Number(seconds))) return null;
+  const h = Number(seconds) / 3600;
+  if (h < 1) return `${Math.max(1, Math.round(Number(seconds) / 60))} min`;
+  if (h < 10) return `${h.toFixed(1)} h`;
+  return `${Math.round(h)} h`;
+}
+
+function initTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  const theme = saved === "light" ? "light" : "dark";
+  document.body.setAttribute("data-theme", theme);
+}
+
+function toggleTheme() {
+  const next =
+    document.body.getAttribute("data-theme") === "light" ? "dark" : "light";
+  document.body.setAttribute("data-theme", next);
+  localStorage.setItem(THEME_KEY, next);
+}
+
 function initMap() {
   if (map || typeof L === "undefined") return;
   map = L.map("map", { zoomControl: true, attributionControl: true }).setView(
@@ -171,6 +221,12 @@ function numberIcon(n) {
   });
 }
 
+function routeLineColor() {
+  return document.body.getAttribute("data-theme") === "light"
+    ? "#0f6b5c"
+    : "#3b82f6";
+}
+
 function resetTripState() {
   tripState.origin = "";
   tripState.stops = [];
@@ -179,17 +235,40 @@ function resetTripState() {
   tripState.endDate = "";
   tripState.notes = "";
   tripState.weatherByStop = {};
+  tripState.weatherCards = [];
+  tripState.placesLinks = [];
+  tripState.lodgingLinks = [];
+  tripState.mapCards = [];
   tripState.geometry = null;
   resetTripPrefs();
   renderSpine();
   clearMapLayers();
-  mapEmpty.classList.remove("hidden");
+  updateMapHud(null);
+  if (mapEmpty) mapEmpty.classList.remove("hidden");
+  renderTripSummary();
 }
 
 function clearMapLayers() {
   if (markersLayer) markersLayer.clearLayers();
   if (routeLayer) routeLayer.clearLayers();
   markerByIndex = [];
+}
+
+function updateMapHud(geometry) {
+  if (!mapHud) return;
+  const route = geometry && geometry.route;
+  const dist = formatDistanceKm(route && route.distance_m);
+  const dur = formatDurationHours(route && route.duration_s);
+  if (!dist && !dur) {
+    mapHud.classList.add("hidden");
+    mapHud.textContent = "";
+    return;
+  }
+  const parts = [];
+  if (dist) parts.push(`~${dist}`);
+  if (dur) parts.push(`~${dur}`);
+  mapHud.textContent = parts.join(" · ");
+  mapHud.classList.remove("hidden");
 }
 
 function renderSpine() {
@@ -258,7 +337,9 @@ async function refreshGeometry() {
   ).filter(Boolean);
   if (stops.length < 1) {
     clearMapLayers();
-    mapEmpty.classList.remove("hidden");
+    updateMapHud(null);
+    if (mapEmpty) mapEmpty.classList.remove("hidden");
+    renderTripSummary();
     return;
   }
 
@@ -271,6 +352,8 @@ async function refreshGeometry() {
     const data = await res.json();
     tripState.geometry = data;
     drawGeometry(data);
+    updateMapHud(data);
+    renderTripSummary();
   } catch (err) {
     console.warn("geometry failed", err);
   }
@@ -282,10 +365,10 @@ function drawGeometry(data) {
   const stops = data.stops || [];
   const usable = stops.filter((s) => s.lat != null && s.lon != null);
   if (!usable.length) {
-    mapEmpty.classList.remove("hidden");
+    if (mapEmpty) mapEmpty.classList.remove("hidden");
     return;
   }
-  mapEmpty.classList.add("hidden");
+  if (mapEmpty) mapEmpty.classList.add("hidden");
 
   usable.forEach((s, i) => {
     const fullIndex = stops.indexOf(s);
@@ -299,7 +382,7 @@ function drawGeometry(data) {
   const routeCoords = data.route && data.route.coordinates;
   if (routeCoords && routeCoords.length > 1) {
     const line = L.polyline(routeCoords, {
-      color: "#0f6b5c",
+      color: routeLineColor(),
       weight: 4,
       opacity: 0.85,
     }).addTo(routeLayer);
@@ -311,6 +394,17 @@ function drawGeometry(data) {
     }
   }
   setTimeout(() => map.invalidateSize(), 60);
+}
+
+function mergeLinks(target, links) {
+  if (!Array.isArray(links)) return;
+  const seen = new Set(target.map((l) => (l.url || l.title || "").toLowerCase()));
+  for (const link of links) {
+    const key = (link.url || link.title || "").toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    target.push(link);
+  }
 }
 
 function ingestCards(cards) {
@@ -341,6 +435,7 @@ function ingestCards(cards) {
       renderPrefs();
     }
     if (card.type === "weather") {
+      tripState.weatherCards.push(card);
       const title = card.title || "";
       const m = title.match(/Weather\s*[—\-]\s*(.+)$/i);
       const place = (m ? m[1] : "").split("(")[0].trim();
@@ -349,15 +444,26 @@ function ingestCards(cards) {
         tripState.weatherByStop[place.toLowerCase()] = {
           icon: day0.icon || "🌡️",
           label: day0.label || card.summary || "Climate",
+          days: card.days || [],
+          summary: card.summary || "",
         };
         dirty = true;
       }
     }
-    if (card.type === "map" && card.origin && card.destination) {
-      const route = [card.origin, card.destination];
-      if (!tripState.routeStops.length) {
-        tripState.routeStops = route;
-        dirty = true;
+    if (card.type === "places" && Array.isArray(card.links)) {
+      mergeLinks(tripState.placesLinks, card.links);
+    }
+    if (card.type === "lodging" && Array.isArray(card.links)) {
+      mergeLinks(tripState.lodgingLinks, card.links);
+    }
+    if (card.type === "map") {
+      tripState.mapCards.push(card);
+      if (card.origin && card.destination) {
+        const route = [card.origin, card.destination];
+        if (!tripState.routeStops.length) {
+          tripState.routeStops = route;
+          dirty = true;
+        }
       }
     }
   }
@@ -365,6 +471,167 @@ function ingestCards(cards) {
     renderSpine();
     scheduleGeometryRefresh();
   }
+  renderTripSummary();
+}
+
+function hasSummaryContent() {
+  const stops = tripState.routeStops.length
+    ? tripState.routeStops
+    : tripState.stops;
+  return (
+    stops.length > 0 ||
+    tripState.weatherCards.length > 0 ||
+    tripState.placesLinks.length > 0 ||
+    tripState.lodgingLinks.length > 0 ||
+    tripState.mapCards.length > 0 ||
+    (tripState.geometry && tripState.geometry.route)
+  );
+}
+
+function renderLinkList(links) {
+  if (!links.length) {
+    return '<p class="summary-empty">Nothing here yet — ask in chat.</p>';
+  }
+  const items = links
+    .slice(0, 12)
+    .map((link) => {
+      const title = (link.title || link.url || "Link").trim();
+      const url = (link.url || "").trim();
+      const sn = link.snippet
+        ? `<span class="card-link-snippet">${escapeHtml(link.snippet)}</span>`
+        : "";
+      if (url) {
+        return `<li><a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a>${sn}</li>`;
+      }
+      return `<li>${escapeHtml(title)}${sn}</li>`;
+    })
+    .join("");
+  return `<ol class="card-links">${items}</ol>`;
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function escapeAttr(s) {
+  return escapeHtml(s).replace(/'/g, "&#39;");
+}
+
+function renderOverviewTab() {
+  const stops = tripState.routeStops.length
+    ? tripState.routeStops
+    : tripState.stops;
+  const route = tripState.geometry && tripState.geometry.route;
+  const dist = formatDistanceKm(route && route.distance_m);
+  const dur = formatDurationHours(route && route.duration_s);
+  const chips = [];
+  if (stops.length) chips.push(`${stops.length} stop${stops.length === 1 ? "" : "s"}`);
+  if (dist) chips.push(dist);
+  if (dur) chips.push(dur);
+  if (tripPrefs.budget) chips.push(tripPrefs.budget);
+  if (tripPrefs.pace) chips.push(tripPrefs.pace);
+  if (tripPrefs.vibe) chips.push(tripPrefs.vibe);
+
+  const bullets = [];
+  if (tripState.origin) bullets.push(`From <strong>${escapeHtml(tripState.origin)}</strong>`);
+  if (stops.length) bullets.push(`Stops: ${stops.map(escapeHtml).join(" → ")}`);
+  if (tripState.startDate || tripState.endDate) {
+    bullets.push(
+      `Dates: ${escapeHtml([tripState.startDate, tripState.endDate].filter(Boolean).join(" → "))}`
+    );
+  }
+  if (tripPrefs.interests && tripPrefs.interests.length) {
+    bullets.push(`Interests: ${tripPrefs.interests.map(escapeHtml).join(", ")}`);
+  }
+  if (tripState.notes) bullets.push(escapeHtml(tripState.notes));
+
+  const chipHtml = chips.length
+    ? `<div class="summary-overview-bits">${chips
+        .map((c) => `<span class="summary-chip">${escapeHtml(c)}</span>`)
+        .join("")}</div>`
+    : "";
+  const listHtml = bullets.length
+    ? `<ul>${bullets.map((b) => `<li>${b}</li>`).join("")}</ul>`
+    : '<p class="summary-empty">Plan details will appear as the agent fills the board.</p>';
+  return chipHtml + listHtml;
+}
+
+function renderWeatherTab() {
+  const entries = Object.entries(tripState.weatherByStop);
+  if (!entries.length && !tripState.weatherCards.length) {
+    return '<p class="summary-empty">No weather yet — ask for climate at your stops.</p>';
+  }
+  if (entries.length) {
+    return `<ul>${entries
+      .map(
+        ([place, w]) =>
+          `<li><strong>${escapeHtml(place)}</strong> — ${escapeHtml(w.icon || "")} ${escapeHtml(w.label || w.summary || "Climate")}</li>`
+      )
+      .join("")}</ul>`;
+  }
+  return `<ul>${tripState.weatherCards
+    .map(
+      (c) =>
+        `<li><strong>${escapeHtml(c.title || "Weather")}</strong>${c.summary ? ` — ${escapeHtml(c.summary)}` : ""}</li>`
+    )
+    .join("")}</ul>`;
+}
+
+function renderRouteTab() {
+  const route = tripState.geometry && tripState.geometry.route;
+  const dist = formatDistanceKm(route && route.distance_m);
+  const dur = formatDurationHours(route && route.duration_s);
+  const parts = [];
+  if (dist || dur) {
+    parts.push(
+      `<p><strong>Driving estimate</strong> · ${[dist && `~${dist}`, dur && `~${dur}`]
+        .filter(Boolean)
+        .join(" · ")} <em>(OSRM)</em></p>`
+    );
+  }
+  for (const card of tripState.mapCards.slice(-3)) {
+    if (card.summary) parts.push(`<p>${escapeHtml(card.summary)}</p>`);
+    if (card.maps_url) {
+      parts.push(
+        `<p><a href="${escapeAttr(card.maps_url)}" target="_blank" rel="noopener noreferrer">Open in Google Maps</a></p>`
+      );
+    }
+  }
+  if (!parts.length) {
+    return '<p class="summary-empty">Route stats appear when the map has a driving line.</p>';
+  }
+  return parts.join("");
+}
+
+function renderTripSummary() {
+  if (!tripSummary || !summaryBody) return;
+  if (!hasSummaryContent()) {
+    tripSummary.classList.add("hidden");
+    return;
+  }
+  tripSummary.classList.remove("hidden");
+  let html = "";
+  switch (activeSummaryTab) {
+    case "weather":
+      html = renderWeatherTab();
+      break;
+    case "places":
+      html = renderLinkList(tripState.placesLinks);
+      break;
+    case "stays":
+      html = renderLinkList(tripState.lodgingLinks);
+      break;
+    case "route":
+      html = renderRouteTab();
+      break;
+    default:
+      html = renderOverviewTab();
+  }
+  summaryBody.innerHTML = html;
 }
 
 function appendMessage(role, text, cards = []) {
@@ -382,7 +649,7 @@ function appendMessage(role, text, cards = []) {
     const wrap = document.createElement("div");
     wrap.className = "cards";
     for (const card of cards) {
-      if (card.type === "trip_board" || card.type === "trip_prefs") continue; // board/prefs live on the sides
+      if (card.type === "trip_board" || card.type === "trip_prefs") continue;
       wrap.appendChild(renderCard(card));
     }
     if (wrap.childNodes.length) el.appendChild(wrap);
@@ -394,6 +661,13 @@ function appendMessage(role, text, cards = []) {
   return el;
 }
 
+function resolveActivity(label) {
+  for (const item of ACTIVITY_SOURCES) {
+    if (item.match.test(label)) return item;
+  }
+  return { source: "Agent", key: label.toLowerCase().slice(0, 24) };
+}
+
 function showThinking() {
   const el = document.createElement("div");
   el.className = "msg assistant thinking";
@@ -403,7 +677,7 @@ function showThinking() {
       <span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span>
       <span class="thinking-label">Thinking…</span>
     </div>
-    <ul class="thinking-log"></ul>
+    <ul class="activity-list"></ul>
   `;
   thread.appendChild(el);
   thread.scrollTop = thread.scrollHeight;
@@ -415,13 +689,22 @@ function updateThinking(label) {
   if (!el) return;
   const labelEl = el.querySelector(".thinking-label");
   if (labelEl) labelEl.textContent = label;
-  const log = el.querySelector(".thinking-log");
-  if (log && label && label !== "Thinking…") {
-    const last = log.lastElementChild;
-    if (!last || last.textContent !== label) {
+  const list = el.querySelector(".activity-list");
+  if (list && label && label !== "Thinking…") {
+    const meta = resolveActivity(label);
+    const existing = list.querySelector(`[data-activity-key="${meta.key}"]`);
+    if (existing) {
+      const lab = existing.querySelector(".activity-label");
+      if (lab) lab.textContent = label;
+    } else {
       const li = document.createElement("li");
-      li.textContent = label;
-      log.appendChild(li);
+      li.className = "activity-card";
+      li.dataset.activityKey = meta.key;
+      li.innerHTML = `
+        <span class="activity-label">${escapeHtml(label)}</span>
+        <span class="activity-source">${escapeHtml(meta.source)}</span>
+      `;
+      list.appendChild(li);
     }
   }
   thread.scrollTop = thread.scrollHeight;
@@ -474,7 +757,12 @@ function renderCard(card) {
     return box;
   }
 
-  if (card.summary && card.type !== "weather" && card.type !== "map" && !(card.links && card.links.length)) {
+  if (
+    card.summary &&
+    card.type !== "weather" &&
+    card.type !== "map" &&
+    !(card.links && card.links.length)
+  ) {
     const p = document.createElement("p");
     p.textContent = card.summary;
     box.appendChild(p);
@@ -489,18 +777,18 @@ function renderCard(card) {
     list.className = "card-links";
     for (const link of card.links.slice(0, 6)) {
       const url = (link.url || "").trim();
-      const title = (link.title || url || "Source").trim();
-      if (!url && !title) continue;
+      const linkTitle = (link.title || url || "Source").trim();
+      if (!url && !linkTitle) continue;
       const li = document.createElement("li");
       if (url) {
         const a = document.createElement("a");
         a.href = url;
         a.target = "_blank";
         a.rel = "noopener noreferrer";
-        a.textContent = title;
+        a.textContent = linkTitle;
         li.appendChild(a);
       } else {
-        li.textContent = title;
+        li.textContent = linkTitle;
       }
       if (link.snippet) {
         const sn = document.createElement("span");
@@ -566,6 +854,31 @@ function closeSettings() {
   settingsStatus.textContent = "";
 }
 
+function openAbout() {
+  aboutModal.classList.remove("hidden");
+  aboutModal.setAttribute("aria-hidden", "false");
+}
+
+function closeAbout() {
+  aboutModal.classList.add("hidden");
+  aboutModal.setAttribute("aria-hidden", "true");
+}
+
+function openPrefs() {
+  document.getElementById("prefBudget").value = tripPrefs.budget || "";
+  document.getElementById("prefPace").value = tripPrefs.pace || "";
+  document.getElementById("prefVibe").value = tripPrefs.vibe || "";
+  document.getElementById("prefInterests").value = (tripPrefs.interests || []).join(", ");
+  document.getElementById("prefCompanions").value = tripPrefs.companions || "";
+  prefsModal.classList.remove("hidden");
+  prefsModal.setAttribute("aria-hidden", "false");
+}
+
+function closePrefs() {
+  prefsModal.classList.add("hidden");
+  prefsModal.setAttribute("aria-hidden", "true");
+}
+
 async function loadSettings() {
   try {
     const res = await fetch("/api/settings");
@@ -601,6 +914,66 @@ function updateKeyBanner(data) {
 settingsBtn.addEventListener("click", openSettings);
 settingsModal.querySelectorAll("[data-close]").forEach((el) => {
   el.addEventListener("click", closeSettings);
+});
+
+if (aboutBtn && aboutModal) {
+  aboutBtn.addEventListener("click", openAbout);
+  aboutModal.querySelectorAll("[data-close-about]").forEach((el) => {
+    el.addEventListener("click", closeAbout);
+  });
+}
+
+if (editPrefsBtn && prefsModal) {
+  editPrefsBtn.addEventListener("click", openPrefs);
+  prefsModal.querySelectorAll("[data-close-prefs]").forEach((el) => {
+    el.addEventListener("click", closePrefs);
+  });
+}
+
+if (prefsForm) {
+  prefsForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    tripPrefs.budget = document.getElementById("prefBudget").value.trim();
+    tripPrefs.pace = document.getElementById("prefPace").value.trim();
+    tripPrefs.vibe = document.getElementById("prefVibe").value.trim();
+    tripPrefs.companions = document.getElementById("prefCompanions").value.trim();
+    const interestRaw = document.getElementById("prefInterests").value.trim();
+    tripPrefs.interests = interestRaw
+      ? interestRaw.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+    savePrefsToStorage();
+    renderPrefs();
+    renderTripSummary();
+    closePrefs();
+
+    const bits = [
+      tripPrefs.budget && `budget ${tripPrefs.budget}`,
+      tripPrefs.pace && `${tripPrefs.pace} pace`,
+      tripPrefs.vibe && `${tripPrefs.vibe} vibe`,
+      tripPrefs.companions && `traveling ${tripPrefs.companions}`,
+      tripPrefs.interests.length && `interested in ${tripPrefs.interests.join(", ")}`,
+    ].filter(Boolean);
+    if (bits.length && input) {
+      input.value = `Please remember my trip prefs: ${bits.join("; ")}.`;
+      input.focus();
+    }
+  });
+}
+
+if (themeToggle) {
+  themeToggle.addEventListener("click", () => {
+    toggleTheme();
+    if (tripState.geometry) drawGeometry(tripState.geometry);
+  });
+}
+
+document.querySelectorAll(".summary-tab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    activeSummaryTab = btn.dataset.tab || "overview";
+    document.querySelectorAll(".summary-tab").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    renderTripSummary();
+  });
 });
 
 settingsForm.addEventListener("submit", async (event) => {
@@ -742,11 +1115,13 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
   });
 });
 
+initTheme();
 shell.classList.add("show-chat");
 initMap();
 loadPrefsFromStorage();
 renderSpine();
 renderPrefs();
+renderTripSummary();
 welcome();
 loadSettings();
 input.focus();
