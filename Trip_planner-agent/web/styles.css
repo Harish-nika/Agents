@@ -300,19 +300,61 @@ body[data-theme="light"] .panel {
 .map-panel {
   position: relative;
   padding: 0;
+  overflow: hidden;
 }
 
 .map-head {
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 3;
   padding: 0.85rem 1rem 0.5rem;
+  background: linear-gradient(
+    180deg,
+    rgba(18, 26, 43, 0.96) 0%,
+    rgba(18, 26, 43, 0.75) 70%,
+    transparent 100%
+  );
+  pointer-events: none;
 }
 
+body[data-theme="light"] .map-head {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 253, 248, 0.96) 0%,
+    rgba(255, 253, 248, 0.75) 70%,
+    transparent 100%
+  );
+}
+
+/* Leaflet needs a real pixel box — absolute fill beats flex height:0 bugs */
 .map-canvas {
-  flex: 1;
-  min-height: 240px;
-  width: 100%;
+  position: absolute;
+  inset: 0;
   z-index: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+  background: #1a2332;
+}
+
+.leaflet-container {
+  width: 100% !important;
+  height: 100% !important;
+  font: inherit;
+  background: #1a2332;
+}
+
+.leaflet-control-zoom {
+  border: none !important;
+  box-shadow: var(--shadow) !important;
+}
+
+.leaflet-control-zoom a {
+  background: var(--panel) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
 }
 
 .map-empty {

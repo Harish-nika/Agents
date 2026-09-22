@@ -22,6 +22,7 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     session_id: str | None = None
     user_id: str | None = None
+    trip_context: dict[str, Any] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -93,6 +94,7 @@ def create_app() -> FastAPI:
             message=body.message,
             session_id=body.session_id,
             user_id=body.user_id or "web_user",
+            trip_context=body.trip_context,
         )
         return ChatResponse(
             session_id=result.session_id,
@@ -113,6 +115,7 @@ def create_app() -> FastAPI:
                 message=body.message,
                 session_id=body.session_id,
                 user_id=body.user_id or "web_user",
+                trip_context=body.trip_context,
             ):
                 yield sse_pack(event)
 

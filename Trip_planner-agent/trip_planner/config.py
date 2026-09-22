@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 ROOT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT_DIR / ".env")
 
-MODEL_NAME = os.getenv("TRIP_PLANNER_MODEL", "gemini-3.6-flash")
+MODEL_NAME = os.getenv("TRIP_PLANNER_MODEL", "gemini-2.0-flash")
 # Comma-separated Gemini fallbacks (never include retired models)
 _FALLBACK_RAW = os.getenv(
     "TRIP_PLANNER_MODEL_FALLBACKS",
@@ -19,6 +19,8 @@ _FALLBACK_RAW = os.getenv(
 MODEL_FALLBACKS = [m.strip() for m in _FALLBACK_RAW.split(",") if m.strip()]
 # Models Google has retired for new API keys — always skip
 _RETIRED_MODELS = {
+    "gemini-3.6-flash",
+    "models/gemini-3.6-flash",
     "gemini-2.5-flash",
     "models/gemini-2.5-flash",
     "gemini-1.5-flash",
@@ -27,19 +29,29 @@ _RETIRED_MODELS = {
 
 # Groq tool-capable chat models (ADK function calling). Compound systems do NOT
 # support tool calling — they are used via tools/compound_research.py (unlimited TPD).
-# Prefer Qwen 27B: gpt-oss reasoning_content breaks ADK multi-turn tool loops on Groq.
-GROQ_MODEL = os.getenv("GROQ_MODEL", "groq/qwen/qwen3.8-27b")
+# Prefer widely available Llama models; Qwen/gpt-oss may not be enabled on every key.
+GROQ_MODEL = os.getenv("GROQ_MODEL", "groq/llama-3.3-70b-versatile")
 _GROQ_FALLBACK_RAW = os.getenv(
     "GROQ_MODEL_FALLBACKS",
-    "groq/openai/gpt-oss-20b",
+    "groq/llama-3.1-8b-instant,groq/openai/gpt-oss-20b",
 )
 GROQ_MODEL_FALLBACKS = [m.strip() for m in _GROQ_FALLBACK_RAW.split(",") if m.strip()]
+
+# Optional local GPU via Ollama (e.g. http://192.168.0.183:11434)
+OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "").strip().rstrip("/")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "").strip()  # e.g. ollama/llama3.1:70b
+_OLLAMA_FALLBACK_RAW = os.getenv("OLLAMA_MODEL_FALLBACKS", "")
+OLLAMA_MODEL_FALLBACKS = [m.strip() for m in _OLLAMA_FALLBACK_RAW.split(",") if m.strip()]
+
 DEFAULT_USER_ID = os.getenv("TRIP_PLANNER_USER_ID", "adk_adventurer_001")
 APP_NAME = "trip_planner"
 HOST = os.getenv("TRIP_PLANNER_HOST", "0.0.0.0")
 PORT = int(os.getenv("TRIP_PLANNER_PORT", "8080"))
 
 os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "False")
+if OLLAMA_API_BASE:
+    # LiteLLM / OpenAI-compatible clients read this for Ollama
+    os.environ.setdefault("OLLAMA_API_BASE", OLLAMA_API_BASE)
 
 
 def sync_groq_api_key() -> str | None:
@@ -78,8 +90,12 @@ def _litellm_model_id(mid: str) -> str:
     return mid
 
 
+def _normalize_ollama_id(name: str) -> str:
+    return name if name.startswith("ollama/") else f"ollama/{name}"
+
+
 def model_candidates() -> list[str]:
-    """Primary Gemini → Gemini fallbacks → tool-capable Groq models (if key).
+    """Primary Gemini → Gemini fallbacks → Groq → optional Ollama GPU last.
 
     Set TRIP_PLANNER_SKIP_GEMINI=1 to use Groq only (useful when Gemini free
     tier daily quota is exhausted).
@@ -109,8 +125,12 @@ def model_candidates() -> list[str]:
         for name in [GROQ_MODEL, *GROQ_MODEL_FALLBACKS]:
             if name:
                 _add(_normalize_groq_id(name))
+    if OLLAMA_API_BASE and (OLLAMA_MODEL or OLLAMA_MODEL_FALLBACKS):
+        for name in [OLLAMA_MODEL, *OLLAMA_MODEL_FALLBACKS]:
+            if name:
+                _add(_normalize_ollama_id(name))
     if not out and not skip_gemini:
-        out = ["gemini-3.6-flash"]
+        out = ["gemini-2.0-flash"]
     return out
 
 
@@ -121,6 +141,8 @@ def tool_capable_model(preferred: str | None = None) -> str:
         for name in [MODEL_NAME, *MODEL_FALLBACKS]:
             if name and name not in _RETIRED_MODELS:
                 return name
+        if OLLAMA_MODEL:
+            return _normalize_ollama_id(OLLAMA_MODEL)
         return "gemini-2.0-flash"
     return mid
 
@@ -132,24 +154,29 @@ def resolve_model(model_id: str | None = None):
         sync_groq_api_key()
         from google.adk.models.lite_llm import LiteLlm
 
-        return LiteLlm(model=_litellm_model_id(mid))
+        kwargs: dict = {"model": _litellm_model_id(mid)}
+        if mid.startswith("ollama/") and OLLAMA_API_BASE:
+            kwargs["api_base"] = OLLAMA_API_BASE
+        return LiteLlm(**kwargs)
     return mid
 
 
 def require_api_key() -> str:
     """Return GOOGLE_API_KEY or raise a clear error.
 
-    Groq-only mode is allowed if a Groq key exists (Gemini optional then).
+    Groq-only or Ollama-only mode is allowed when those backends are configured.
     """
     key = os.getenv("GOOGLE_API_KEY", "").strip()
     if key and key != "your_api_key_here":
         os.environ["GOOGLE_API_KEY"] = key
         return key
     if get_groq_api_key():
-        # Placeholder so ADK env checks that expect a key don't crash; Groq path uses LiteLLM.
         return "groq-only"
+    if OLLAMA_API_BASE and (OLLAMA_MODEL or OLLAMA_MODEL_FALLBACKS):
+        return "ollama-only"
     raise RuntimeError(
-        "No LLM key set. Add GOOGLE_API_KEY and/or grok_key (Groq) in Settings / .env."
+        "No LLM key set. Add GOOGLE_API_KEY and/or grok_key (Groq) in Settings / .env, "
+        "or set OLLAMA_API_BASE + OLLAMA_MODEL for your GPU box."
     )
 
 

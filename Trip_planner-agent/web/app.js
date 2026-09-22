@@ -197,9 +197,32 @@ function toggleTheme() {
   localStorage.setItem(THEME_KEY, next);
 }
 
+function bumpMapSize() {
+  if (!map) return;
+  try {
+    map.invalidateSize({ animate: false });
+  } catch {
+    /* ignore */
+  }
+}
+
 function initMap() {
-  if (map || typeof L === "undefined") return;
-  map = L.map("map", { zoomControl: true, attributionControl: true }).setView(
+  if (map) {
+    bumpMapSize();
+    return;
+  }
+  if (typeof L === "undefined") {
+    if (mapEmpty) {
+      mapEmpty.classList.remove("hidden");
+      mapEmpty.textContent =
+        "Map library failed to load. Hard-refresh the page; if it persists, restart the Trip Guide server.";
+    }
+    return;
+  }
+  const el = document.getElementById("map");
+  if (!el) return;
+
+  map = L.map(el, { zoomControl: true, attributionControl: true }).setView(
     [15.0, 75.5],
     6
   );
@@ -209,7 +232,11 @@ function initMap() {
   }).addTo(map);
   markersLayer = L.layerGroup().addTo(map);
   routeLayer = L.layerGroup().addTo(map);
-  setTimeout(() => map.invalidateSize(), 80);
+  // Layout often settles after first paint — resize a few times
+  bumpMapSize();
+  requestAnimationFrame(bumpMapSize);
+  setTimeout(bumpMapSize, 100);
+  setTimeout(bumpMapSize, 400);
 }
 
 function numberIcon(n) {
@@ -361,11 +388,16 @@ async function refreshGeometry() {
 
 function drawGeometry(data) {
   initMap();
+  if (!map || !markersLayer || typeof L === "undefined") return;
+
   clearMapLayers();
   const stops = data.stops || [];
   const usable = stops.filter((s) => s.lat != null && s.lon != null);
   if (!usable.length) {
-    if (mapEmpty) mapEmpty.classList.remove("hidden");
+    if (mapEmpty) {
+      mapEmpty.classList.remove("hidden");
+      mapEmpty.textContent = "Could not place stops on the map (geocode failed).";
+    }
     return;
   }
   if (mapEmpty) mapEmpty.classList.add("hidden");
@@ -393,7 +425,18 @@ function drawGeometry(data) {
       map.fitBounds(group.getBounds().pad(0.25));
     }
   }
-  setTimeout(() => map.invalidateSize(), 60);
+  bumpMapSize();
+  requestAnimationFrame(() => {
+    bumpMapSize();
+    if (routeCoords && routeCoords.length > 1) {
+      try {
+        map.fitBounds(L.polyline(routeCoords).getBounds().pad(0.18));
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+  setTimeout(bumpMapSize, 250);
 }
 
 function mergeLinks(target, links) {
@@ -1020,6 +1063,25 @@ newTripBtn.addEventListener("click", () => {
 });
 
 async function sendViaStream(message) {
+  const stops = (tripState.routeStops.length
+    ? tripState.routeStops
+    : tripState.stops
+  ).filter(Boolean);
+  const trip_context = {
+    origin: tripState.origin || "",
+    stops,
+    route_stops: stops,
+    start_date: tripState.startDate || "",
+    end_date: tripState.endDate || "",
+    prefs: {
+      budget: tripPrefs.budget || "",
+      pace: tripPrefs.pace || "",
+      vibe: tripPrefs.vibe || "",
+      companions: tripPrefs.companions || "",
+      interests: tripPrefs.interests || [],
+    },
+  };
+
   showThinking();
   const res = await fetch("/api/chat/stream", {
     method: "POST",
@@ -1027,6 +1089,7 @@ async function sendViaStream(message) {
     body: JSON.stringify({
       message,
       session_id: getSessionId(),
+      trip_context,
     }),
   });
 
@@ -1125,3 +1188,11 @@ renderTripSummary();
 welcome();
 loadSettings();
 input.focus();
+
+// Keep Leaflet sized when the side panel resizes
+const mapPanelEl = document.getElementById("mapPanel");
+if (mapPanelEl && typeof ResizeObserver !== "undefined") {
+  const ro = new ResizeObserver(() => bumpMapSize());
+  ro.observe(mapPanelEl);
+}
+window.addEventListener("resize", bumpMapSize);

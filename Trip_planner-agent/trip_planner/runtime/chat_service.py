@@ -131,6 +131,126 @@ def _friendly_error(raw: str) -> str:
     return cleaned or "Something went wrong. Please try again."
 
 
+_COT_MARKERS = (
+    "the instructions say",
+    "we need to understand the trip first",
+    "likely they forgot",
+    "so we need to ask",
+    "chain of thought",
+    "let me think",
+    "my reasoning",
+    "looking at the prompt",
+    "so sequence:",
+    "let's construct",
+    "lets construct",
+    "we'll call each",
+    "provide request strings",
+    "function calls",
+)
+
+
+def _looks_like_tool_planning_leak(text: str) -> bool:
+    """True when the model narrates tool calls instead of invoking them."""
+    lower = (text or "").lower()
+    if not lower:
+        return False
+    if any(m in lower for m in _COT_MARKERS):
+        return True
+    tool_names = (
+        "publish_trip_board",
+        "publish_trip_prefs",
+        "weather_specialist",
+        "places_specialist",
+        "stays_specialist",
+        "directions_specialist",
+    )
+    hits = sum(1 for t in tool_names if t in lower)
+    if hits >= 2:
+        return True
+    if "call `" in lower and "specialist" in lower:
+        return True
+    return False
+
+
+def _format_trip_context(ctx: dict[str, Any] | None) -> str:
+    """Compact board snapshot so the model sees UI trip state after server restarts."""
+    if not ctx or not isinstance(ctx, dict):
+        return ""
+    stops = ctx.get("route_stops") or ctx.get("stops") or []
+    if isinstance(stops, str):
+        stops = [s.strip() for s in stops.split(",") if s.strip()]
+    prefs = ctx.get("prefs") or {}
+    bits = []
+    origin = (ctx.get("origin") or "").strip()
+    if origin:
+        bits.append(f"origin={origin}")
+    if stops:
+        bits.append("stops=" + " → ".join(str(s) for s in stops))
+    start = (ctx.get("start_date") or "").strip()
+    end = (ctx.get("end_date") or "").strip()
+    if start or end:
+        bits.append(f"dates={start or '?'} → {end or '?'}")
+    pref_bits = [
+        prefs.get("budget"),
+        prefs.get("pace"),
+        prefs.get("vibe"),
+        prefs.get("companions"),
+    ]
+    interests = prefs.get("interests") or []
+    if isinstance(interests, list) and interests:
+        pref_bits.append(", ".join(str(i) for i in interests))
+    pref_bits = [p for p in pref_bits if p]
+    if pref_bits:
+        bits.append("prefs=" + "; ".join(str(p) for p in pref_bits))
+    if not bits:
+        return ""
+    return (
+        "[Current trip board — already shown in the UI; do not re-ask for these details]\n"
+        + "\n".join(f"- {b}" for b in bits)
+        + "\n\n"
+    )
+
+
+def _strip_chain_of_thought(text: str) -> str:
+    """Drop leaked planning monologues; keep the last user-facing section if possible."""
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+    lower = raw.lower()
+    looks_like_cot = any(m in lower for m in _COT_MARKERS) or (
+        lower.startswith("the user") and "we need" in lower
+    )
+    if not looks_like_cot:
+        return raw
+
+    # Prefer text after a clear reply marker
+    for sep in ("\n\nSure", "\nSure!", "\nHere's", "\nHere is", "\n**", "\n#"):
+        idx = raw.find(sep)
+        if idx > 40:
+            cleaned = raw[idx:].lstrip()
+            if len(cleaned) > 20:
+                return cleaned
+
+    lines = raw.splitlines()
+    kept: list[str] = []
+    for line in lines:
+        l = line.lower().strip()
+        if any(m in l for m in _COT_MARKERS):
+            continue
+        if l.startswith("the user ") or l.startswith("they didn't") or l.startswith("we should ask"):
+            continue
+        if "instructions say" in l:
+            continue
+        kept.append(line)
+    cleaned = "\n".join(kept).strip()
+    if cleaned and len(cleaned) > 30:
+        return cleaned
+    return (
+        "Got it — using your current trip board. "
+        "Ask me again for weather, places, or food and I’ll pull those via the specialists."
+    )
+
+
 @dataclass
 class ChatResult:
     session_id: str
@@ -182,6 +302,7 @@ class ChatService:
         message: str,
         session_id: str | None = None,
         user_id: str = DEFAULT_USER_ID,
+        trip_context: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Yield status/done events for streaming UI."""
         require_api_key()
@@ -194,6 +315,7 @@ class ChatService:
         last_error = ""
         models = model_candidates()
         skip_remaining_gemini = False
+        agent_message = f"{_format_trip_context(trip_context)}{message}"
 
         yield {"type": "status", "label": "Thinking…", "session_id": client_sid}
 
@@ -230,7 +352,7 @@ class ChatService:
                 async for event in runner.run_async(
                     user_id=user_id,
                     session_id=sid,
-                    new_message=Content(parts=[Part(text=message)], role="user"),
+                    new_message=Content(parts=[Part(text=agent_message)], role="user"),
                 ):
                     for call in event.get_function_calls() or []:
                         name = getattr(call, "name", None) or ""
@@ -271,6 +393,17 @@ class ChatService:
                             "session_id": client_sid,
                         }
                     continue
+
+                # Model wrote a tool plan as text instead of calling tools — try next
+                if attempt_reply and _looks_like_tool_planning_leak(attempt_reply) and not pending_status:
+                    last_error = "model dumped tool plan instead of calling tools"
+                    yield {
+                        "type": "status",
+                        "label": f"{model} skipped tool calls — trying next…",
+                        "session_id": client_sid,
+                    }
+                    continue
+
                 if attempt_reply:
                     reply = attempt_reply
                     break
@@ -318,9 +451,23 @@ class ChatService:
                 break
 
         if not reply:
-            reply = _friendly_error(last_error or _FRIENDLY_BUSY)
+            if "tool plan instead of calling tools" in (last_error or ""):
+                reply = (
+                    "The model started planning tools in chat instead of running them. "
+                    "Send your message once more — Trip Guide will try the next model "
+                    "(or enable Ollama on your GPU box as a last fallback)."
+                )
+            else:
+                reply = _friendly_error(last_error or _FRIENDLY_BUSY)
         elif _should_try_next_model(reply):
             reply = _friendly_error(reply)
+        elif _looks_like_tool_planning_leak(reply):
+            reply = (
+                "I caught an incomplete tool-planning dump (board/map were not updated). "
+                "Please send the same trip request again so I can retry with another model."
+            )
+        else:
+            reply = _strip_chain_of_thought(reply)
 
         cards = end_turn()
         yield {
@@ -336,9 +483,15 @@ class ChatService:
         message: str,
         session_id: str | None = None,
         user_id: str = DEFAULT_USER_ID,
+        trip_context: dict[str, Any] | None = None,
     ) -> ChatResult:
         result = ChatResult(session_id=session_id or "", reply="", cards=[], activity=[])
-        async for event in self.chat_events(message, session_id=session_id, user_id=user_id):
+        async for event in self.chat_events(
+            message,
+            session_id=session_id,
+            user_id=user_id,
+            trip_context=trip_context,
+        ):
             if event.get("type") == "done":
                 result = ChatResult(
                     session_id=event["session_id"],
