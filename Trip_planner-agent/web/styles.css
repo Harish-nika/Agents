@@ -403,16 +403,18 @@ body[data-theme="light"] .map-hud {
   background: rgba(255, 253, 248, 0.95);
 }
 
-.leaflet-div-icon.num-marker {
+.leaflet-div-icon.num-marker,
+.leaflet-div-icon.place-marker {
   background: transparent;
   border: none;
 }
 
-.num-marker span {
+.num-marker .num-bubble {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border-radius: 999px;
   background: var(--accent);
   color: #fff;
@@ -420,6 +422,91 @@ body[data-theme="light"] .map-hud {
   font-size: 0.8rem;
   box-shadow: 0 4px 12px rgba(15, 107, 92, 0.35);
   border: 2px solid #fff;
+}
+
+.num-marker .wx {
+  position: absolute;
+  right: -10px;
+  top: -10px;
+  font-style: normal;
+  font-size: 0.95rem;
+  line-height: 1;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+}
+
+.place-marker .place-pin {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  font-size: 1.15rem;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
+}
+
+.place-marker.kind-food .place-pin {
+  background: rgba(240, 160, 80, 0.2);
+  border-radius: 999px;
+}
+
+.place-marker.kind-lodging .place-pin {
+  background: rgba(120, 160, 255, 0.22);
+  border-radius: 999px;
+}
+
+.summary-label {
+  margin: 0.55rem 0 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.trip-map-popup .leaflet-popup-content-wrapper {
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.trip-map-popup .leaflet-popup-tip {
+  background: var(--panel);
+}
+
+.map-popup {
+  min-width: 160px;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+.map-pop-title {
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+}
+
+.map-pop-section {
+  margin-top: 0.45rem;
+}
+
+.map-pop-muted {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-top: 0.15rem;
+}
+
+.map-pop-list {
+  margin: 0.25rem 0 0 1rem;
+  padding: 0;
+}
+
+.map-pop-list a {
+  color: var(--accent);
+}
+
+.map-pop-link {
+  display: inline-block;
+  margin-top: 0.4rem;
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .mobile-tabs {
@@ -432,6 +519,97 @@ body[data-theme="light"] .map-hud {
   align-items: flex-start;
   gap: 1rem;
   margin-bottom: 1rem;
+}
+
+.header-meta {
+  flex-shrink: 0;
+}
+
+.runtime-chip {
+  display: inline-block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--accent-soft);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.runtime-chip[data-mode="local"] {
+  background: rgba(46, 160, 120, 0.15);
+  color: #3dd68c;
+  border-color: rgba(61, 214, 140, 0.35);
+}
+
+.runtime-chip[data-mode="cloud"] {
+  background: rgba(88, 140, 255, 0.12);
+  color: #7aa2ff;
+  border-color: rgba(122, 162, 255, 0.35);
+}
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.15rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.status-text::before {
+  content: "";
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.45rem;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+.msg-body h3, .msg-body h4 {
+  margin: 0.6rem 0 0.35rem;
+  font-size: 1rem;
+}
+
+.msg-body ul {
+  margin: 0.35rem 0 0.5rem 1.1rem;
+  padding: 0;
+}
+
+.msg-body code {
+  font-size: 0.88em;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  background: var(--accent-soft);
+}
+
+.msg-body pre {
+  overflow-x: auto;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.msg-body a {
+  color: var(--accent);
+}
+
+.msg-body.streaming::after {
+  content: "▍";
+  animation: blink 0.9s step-end infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
 }
 
 .header-actions {
@@ -894,11 +1072,23 @@ body[data-theme="light"] .weather-day {
 
 .composer {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.65rem;
+  grid-template-columns: 1fr;
+  gap: 0.55rem;
   align-items: end;
   padding-top: 0.5rem;
   border-top: 1px solid var(--line);
+}
+
+.composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.btn.danger {
+  border-color: #c45c5c;
+  color: #f0a0a0;
 }
 
 textarea {

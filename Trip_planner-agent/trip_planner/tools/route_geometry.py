@@ -2,11 +2,38 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import requests
 
 from trip_planner.tools.geocode import geocode_stops
+
+_SPLIT_STOPS = re.compile(
+    r"\s*(?:,|/|;|\||→|->|–|—|\bto\b|\bthen\b)\s*",
+    re.IGNORECASE,
+)
+
+
+def _expand_stop_names(names: list[str]) -> list[str]:
+    """If a single 'A → B → C' name slipped through, explode it."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        parts = [p.strip(" .") for p in _SPLIT_STOPS.split(name) if p and p.strip(" .")]
+        if len(parts) <= 1:
+            parts = [name.strip()]
+        for p in parts:
+            if len(p) < 2:
+                continue
+            key = p.lower()
+            # Keep consecutive duplicates (return legs) but skip immediate dups from noise
+            if out and out[-1].lower() == key:
+                continue
+            # Allow return to origin later; only skip if same as last
+            seen.add(key)
+            out.append(p)
+    return out
 
 
 def _osrm_route(coords: list[tuple[float, float]]) -> dict[str, Any] | None:
@@ -46,23 +73,24 @@ def build_trip_geometry(stops: list[dict[str, Any]]) -> dict[str, Any]:
     Each stop: {name, lat?, lon?}
     """
     names = [s.get("name") or s.get("label") or "" for s in stops]
-    names = [n for n in names if n.strip()]
+    names = _expand_stop_names([n for n in names if n.strip()])
     if not names:
         return {"status": "error", "message": "No stops provided.", "stops": [], "route": None}
 
     # Prefer provided coords; fill missing via geocode
     resolved: list[dict[str, Any]] = []
-    for s in stops:
-        name = (s.get("name") or s.get("label") or "").strip()
-        if not name:
-            continue
-        lat = s.get("lat")
-        lon = s.get("lon")
+    coord_by_name = {
+        (s.get("name") or s.get("label") or "").strip().lower(): s for s in stops
+    }
+    for name in names:
+        prior = coord_by_name.get(name.lower()) or {}
+        lat = prior.get("lat")
+        lon = prior.get("lon")
         if lat is not None and lon is not None:
             resolved.append(
                 {
                     "name": name,
-                    "label": s.get("label") or name,
+                    "label": prior.get("label") or name,
                     "lat": float(lat),
                     "lon": float(lon),
                 }

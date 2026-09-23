@@ -27,6 +27,12 @@ def get_cards() -> list[dict[str, Any]]:
     return list(_cards.get() or [])
 
 
+def peek_new_cards(seen: int) -> tuple[list[dict[str, Any]], int]:
+    """Return cards appended since ``seen`` without clearing the turn."""
+    cards = get_cards()
+    return cards[seen:], len(cards)
+
+
 def end_turn() -> list[dict[str, Any]]:
     """Return and clear cards for this turn."""
     cards = get_cards()

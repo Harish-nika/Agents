@@ -178,15 +178,6 @@ def get_weather_for_dates(location: str, start_date: str, end_date: str) -> dict
 
         days, source = _fetch_daily(geo, start, end)
         days = [enrich_day(d) for d in days]
-        result = {
-            "status": "success",
-            "location": geo["name"],
-            "country": geo["country"],
-            "start_date": start.isoformat(),
-            "end_date": end.isoformat(),
-            "source": source,
-            "days": days,
-        }
         summary_bits = []
         for day in days[:5]:
             summary_bits.append(
@@ -203,7 +194,18 @@ def get_weather_for_dates(location: str, start_date: str, end_date: str) -> dict
                 "source": source,
             }
         )
-        return result
+        prose = " · ".join(summary_bits) if summary_bits else "No daily data returned."
+        return {
+            "status": "success",
+            "location": geo["name"],
+            "message": (
+                f"Weather for {geo['name']} ({start.isoformat()} → {end.isoformat()}, "
+                f"{source}): {prose}. "
+                "Summarize this briefly for the user in natural language — do not paste JSON."
+            ),
+            "day_count": len(days),
+            "source": source,
+        }
     except ValueError:
         return {
             "status": "error",

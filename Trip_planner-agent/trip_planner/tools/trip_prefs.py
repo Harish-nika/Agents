@@ -56,4 +56,12 @@ def publish_trip_prefs(
         ),
     }
     add_card(card)
-    return {"status": "success", **card}
+    summary = card.get("summary") or "preferences saved"
+    return {
+        "status": "success",
+        "message": (
+            f"Preferences saved for the UI ({summary}). "
+            "Do NOT paste JSON to the user — continue with specialists if needed."
+        ),
+        "summary": summary,
+    }

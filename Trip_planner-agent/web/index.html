@@ -49,6 +49,9 @@
           <h1>Trip Guide</h1>
           <p class="tagline">Plan one step at a time — weather, places, food, stays, maps.</p>
         </div>
+        <div class="header-meta">
+          <span id="runtimeChip" class="runtime-chip" title="Change in Settings">Auto</span>
+        </div>
       </header>
 
       <div id="keyBanner" class="banner hidden" role="status"></div>
@@ -66,6 +69,10 @@
         <div id="summaryBody" class="summary-body"></div>
       </section>
 
+      <div id="statusBar" class="status-bar hidden" aria-live="polite">
+        <span id="statusText" class="status-text">Thinking…</span>
+      </div>
+
       <form id="chatForm" class="composer">
         <textarea
           id="message"
@@ -73,14 +80,18 @@
           placeholder="e.g. Planning a trip to San Francisco March 20–22…"
           required
         ></textarea>
-        <button type="submit" class="btn primary" id="sendBtn">Send</button>
+        <div class="composer-actions">
+          <button type="button" class="btn ghost" id="regenBtn" title="Regenerate last reply" hidden>Regenerate</button>
+          <button type="button" class="btn ghost danger" id="stopBtn" hidden>Stop</button>
+          <button type="submit" class="btn primary" id="sendBtn">Send</button>
+        </div>
       </form>
     </div>
 
     <aside id="mapPanel" class="panel map-panel" aria-label="Route map">
       <div class="panel-head map-head">
         <h2>Route map</h2>
-        <p class="panel-sub">Markers + driving line · Leaflet / OSM</p>
+        <p class="panel-sub">Click markers for weather &amp; places · Leaflet / OSM</p>
       </div>
       <div id="mapHud" class="map-hud hidden" aria-live="polite"></div>
       <div id="mapEmpty" class="map-empty">Your route will draw here as the plan fills in.</div>
@@ -102,22 +113,44 @@
         <button type="button" class="btn ghost" data-close>Close</button>
       </div>
       <p class="modal-help">
-        Keys are saved on this server in <code>.env</code>.
-        Gemini from
-        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">AI Studio</a>;
-        Groq fallback from
-        <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com</a>.
+        Keys and Ollama are saved in <code>.env</code>.
+        Choose <strong>Local</strong> for GPU-only, <strong>Cloud</strong> for Gemini/Groq keys,
+        or <strong>Auto</strong> to try cloud then fall back to Ollama.
       </p>
       <form id="settingsForm" class="settings-form">
         <label>
-          Gemini API key <span class="opt">(preferred)</span>
+          Runtime mode
+          <select id="runtimeMode" name="runtime_mode">
+            <option value="auto">Auto — cloud first, then local GPU</option>
+            <option value="local">Local — Ollama GPU only</option>
+            <option value="cloud">Cloud — Gemini / Groq only</option>
+          </select>
+          <span id="runtimeModeHint" class="hint"></span>
+        </label>
+        <label>
+          Gemini API key <span class="opt">(cloud)</span>
           <input type="password" id="googleApiKey" name="google_api_key" autocomplete="off" placeholder="Paste Gemini API key" />
           <span id="geminiHint" class="hint"></span>
         </label>
         <label>
-          Groq API key <span class="opt">(fallback when Gemini is busy)</span>
+          Groq API key <span class="opt">(cloud fallback)</span>
           <input type="password" id="groqApiKey" name="groq_api_key" autocomplete="off" placeholder="gsk_… from console.groq.com" />
           <span id="groqHint" class="hint"></span>
+        </label>
+        <label>
+          Ollama base URL <span class="opt">(local GPU)</span>
+          <input type="text" id="ollamaApiBase" name="ollama_api_base" autocomplete="off" placeholder="http://127.0.0.1:11434" />
+          <span id="ollamaBaseHint" class="hint"></span>
+        </label>
+        <label>
+          Ollama model <span class="opt">(tool-capable preferred)</span>
+          <input type="text" id="ollamaModel" name="ollama_model" autocomplete="off" placeholder="ollama/llama3-groq-tool-use:latest" />
+          <span id="ollamaModelHint" class="hint"></span>
+        </label>
+        <label>
+          Ollama fallbacks <span class="opt">(comma-separated)</span>
+          <input type="text" id="ollamaFallbacks" name="ollama_model_fallbacks" autocomplete="off" placeholder="ollama/llama3.1:latest" />
+          <span id="ollamaFallbacksHint" class="hint"></span>
         </label>
         <label>
           Google Maps API key <span class="opt">(optional)</span>
@@ -126,7 +159,7 @@
         </label>
         <p id="settingsStatus" class="settings-status" aria-live="polite"></p>
         <div class="modal-actions">
-          <button type="submit" class="btn primary" id="saveSettings">Save keys</button>
+          <button type="submit" class="btn primary" id="saveSettings">Save settings</button>
         </div>
       </form>
     </div>
@@ -142,7 +175,7 @@
       <p class="modal-help">
         Multi-agent trip planner built with Google ADK. An orchestrator delegates to weather,
         places, stays, and directions specialists. Free tools: Open-Meteo, DuckDuckGo/Wikipedia,
-        Leaflet/OSM, and OSRM. Gemini is primary; Groq is the failover.
+        Leaflet/OSM, and OSRM. Choose Local, Cloud, or Auto in Settings.
       </p>
     </div>
   </div>

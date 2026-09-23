@@ -1,10 +1,17 @@
 const STORAGE_KEY = "trip_guide_session_id";
 const THEME_KEY = "trip_guide_theme";
+const THREAD_KEY = "trip_guide_thread";
+const LAST_USER_KEY = "trip_guide_last_user";
 
 const thread = document.getElementById("thread");
 const form = document.getElementById("chatForm");
 const input = document.getElementById("message");
 const sendBtn = document.getElementById("sendBtn");
+const stopBtn = document.getElementById("stopBtn");
+const regenBtn = document.getElementById("regenBtn");
+const statusBar = document.getElementById("statusBar");
+const statusText = document.getElementById("statusText");
+const runtimeChip = document.getElementById("runtimeChip");
 const newTripBtn = document.getElementById("newTrip");
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsModal = document.getElementById("settingsModal");
@@ -14,9 +21,17 @@ const keyBanner = document.getElementById("keyBanner");
 const geminiInput = document.getElementById("googleApiKey");
 const mapsInput = document.getElementById("mapsApiKey");
 const groqInput = document.getElementById("groqApiKey");
+const ollamaBaseInput = document.getElementById("ollamaApiBase");
+const ollamaModelInput = document.getElementById("ollamaModel");
+const ollamaFallbacksInput = document.getElementById("ollamaFallbacks");
+const runtimeModeSelect = document.getElementById("runtimeMode");
+const runtimeModeHint = document.getElementById("runtimeModeHint");
 const geminiHint = document.getElementById("geminiHint");
 const mapsHint = document.getElementById("mapsHint");
 const groqHint = document.getElementById("groqHint");
+const ollamaBaseHint = document.getElementById("ollamaBaseHint");
+const ollamaModelHint = document.getElementById("ollamaModelHint");
+const ollamaFallbacksHint = document.getElementById("ollamaFallbacksHint");
 const spineList = document.getElementById("spineList");
 const spineDates = document.getElementById("spineDates");
 const spineNotes = document.getElementById("spineNotes");
@@ -33,6 +48,10 @@ const prefsForm = document.getElementById("prefsForm");
 const themeToggle = document.getElementById("themeToggle");
 const shell = document.querySelector(".shell");
 
+let streamAbort = null;
+let lastUserMessage = "";
+let streamingBodyEl = null;
+
 const tripState = {
   origin: "",
   stops: [],
@@ -44,6 +63,7 @@ const tripState = {
   weatherCards: [],
   placesLinks: [],
   lodgingLinks: [],
+  pois: [],
   mapCards: [],
   geometry: null,
 };
@@ -59,10 +79,13 @@ const tripPrefs = {
 
 let map;
 let markersLayer;
+let placesLayer;
 let routeLayer;
 let geometryTimer = null;
+let placesTimer = null;
 let markerByIndex = [];
 let activeSummaryTab = "overview";
+let placeGeoCache = {};
 
 const ACTIVITY_SOURCES = [
   { match: /climate|weather/i, source: "Open-Meteo", key: "climate" },
@@ -231,6 +254,7 @@ function initMap() {
     attribution: "&copy; OpenStreetMap",
   }).addTo(map);
   markersLayer = L.layerGroup().addTo(map);
+  placesLayer = L.layerGroup().addTo(map);
   routeLayer = L.layerGroup().addTo(map);
   // Layout often settles after first paint — resize a few times
   bumpMapSize();
@@ -239,13 +263,108 @@ function initMap() {
   setTimeout(bumpMapSize, 400);
 }
 
-function numberIcon(n) {
+function numberIcon(n, weatherIcon) {
+  const wx = weatherIcon
+    ? `<em class="wx" title="Weather">${weatherIcon}</em>`
+    : "";
   return L.divIcon({
     className: "num-marker",
-    html: `<span>${n}</span>`,
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
+    html: `<span class="num-bubble"><b>${n}</b>${wx}</span>`,
+    iconSize: [32, 40],
+    iconAnchor: [16, 20],
   });
+}
+
+function placeIcon(kind) {
+  const k = kind || "places";
+  const emoji = k === "food" ? "🍽️" : k === "lodging" ? "🛏️" : "📍";
+  return L.divIcon({
+    className: `place-marker kind-${k}`,
+    html: `<span class="place-pin" title="${k}">${emoji}</span>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 26],
+  });
+}
+
+function weatherForStopName(name) {
+  if (!name) return null;
+  const key = String(name).toLowerCase();
+  if (tripState.weatherByStop[key]) return tripState.weatherByStop[key];
+  // Fuzzy: "Gokarna Beach" ↔ "gokarna"
+  for (const [k, v] of Object.entries(tripState.weatherByStop)) {
+    if (key.includes(k) || k.includes(key)) return v;
+  }
+  return null;
+}
+
+function placesNearStop(stopName) {
+  const key = String(stopName || "").toLowerCase();
+  const fromPois = (tripState.pois || []).filter((p) => {
+    if (!key) return true;
+    const near = String(p.near || "").toLowerCase();
+    const name = String(p.name || "").toLowerCase();
+    return near.includes(key) || key.includes(near) || name.includes(key);
+  });
+  if (fromPois.length) {
+    return fromPois.slice(0, 5).map((p) => ({
+      title: `${p.icon || "📍"} ${p.name}`,
+      url: p.osm_url || "",
+      snippet: `${p.category || p.kind || ""}${p.distance_km != null ? ` · ${p.distance_km} km` : ""}`,
+    }));
+  }
+  if (!key) return tripState.placesLinks.slice(0, 4);
+  const hits = tripState.placesLinks.filter((link) => {
+    const blob = `${link.title || ""} ${link.snippet || ""}`.toLowerCase();
+    return blob.includes(key);
+  });
+  return (hits.length ? hits : tripState.placesLinks).slice(0, 4);
+}
+
+function stopPopupHtml(stop) {
+  const name = stop.label || stop.name || "Stop";
+  const wx = weatherForStopName(name);
+  let weatherBlock = "";
+  if (wx) {
+    const days = (wx.days || []).slice(0, 3)
+      .map(
+        (d) =>
+          `<li>${escapeHtml(d.icon || "")} ${escapeHtml(d.date || "")}: `
+          + `${escapeHtml(String(d.temp_min_c ?? "?"))}–${escapeHtml(String(d.temp_max_c ?? "?"))}°C `
+          + `(${escapeHtml(d.label || "")})</li>`
+      )
+      .join("");
+    weatherBlock = `
+      <div class="map-pop-section">
+        <strong>${escapeHtml(wx.icon || "🌡️")} Weather</strong>
+        <div class="map-pop-muted">${escapeHtml(wx.label || wx.summary || "")}</div>
+        ${days ? `<ul class="map-pop-list">${days}</ul>` : ""}
+      </div>`;
+  }
+  const places = placesNearStop(name);
+  let placesBlock = "";
+  if (places.length) {
+    const items = places
+      .map((p) => {
+        const title = escapeHtml(p.title || "Place");
+        const url = (p.url || "").trim();
+        if (url) {
+          return `<li><a href="${escapeAttr(url)}" target="_blank" rel="noopener">${title}</a></li>`;
+        }
+        return `<li>${title}</li>`;
+      })
+      .join("");
+    placesBlock = `
+      <div class="map-pop-section">
+        <strong>Top places</strong>
+        <ul class="map-pop-list">${items}</ul>
+      </div>`;
+  }
+  return `
+    <div class="map-popup">
+      <div class="map-pop-title">${escapeHtml(name)}</div>
+      ${weatherBlock || '<div class="map-pop-muted">Ask in chat for climate at this stop.</div>'}
+      ${placesBlock || ""}
+    </div>`;
 }
 
 function routeLineColor() {
@@ -265,8 +384,10 @@ function resetTripState() {
   tripState.weatherCards = [];
   tripState.placesLinks = [];
   tripState.lodgingLinks = [];
+  tripState.pois = [];
   tripState.mapCards = [];
   tripState.geometry = null;
+  placeGeoCache = {};
   resetTripPrefs();
   renderSpine();
   clearMapLayers();
@@ -277,6 +398,7 @@ function resetTripState() {
 
 function clearMapLayers() {
   if (markersLayer) markersLayer.clearLayers();
+  if (placesLayer) placesLayer.clearLayers();
   if (routeLayer) routeLayer.clearLayers();
   markerByIndex = [];
 }
@@ -357,11 +479,30 @@ function scheduleGeometryRefresh() {
   geometryTimer = setTimeout(refreshGeometry, 320);
 }
 
+/** Expand "A → B → C" spine mistakes before calling geometry API. */
+function expandStopNames(stops) {
+  const out = [];
+  const splitRe = /\s*(?:,|\/|;|\||→|->|–|—|\bto\b|\bthen\b)\s*/i;
+  for (const raw of stops || []) {
+    const name = String(raw || "").trim();
+    if (!name) continue;
+    const parts = name.split(splitRe).map((p) => p.trim()).filter((p) => p.length > 1);
+    const list = parts.length > 1 ? parts : [name];
+    for (const p of list) {
+      if (out.length && out[out.length - 1].toLowerCase() === p.toLowerCase()) continue;
+      out.push(p);
+    }
+  }
+  return out;
+}
+
 async function refreshGeometry() {
-  const stops = (tripState.routeStops.length
-    ? tripState.routeStops
-    : tripState.stops
-  ).filter(Boolean);
+  const stops = expandStopNames(
+    tripState.routeStops.length ? tripState.routeStops : tripState.stops
+  );
+  if (stops.length >= 2) {
+    tripState.routeStops = stops;
+  }
   if (stops.length < 1) {
     clearMapLayers();
     updateMapHud(null);
@@ -404,11 +545,16 @@ function drawGeometry(data) {
 
   usable.forEach((s, i) => {
     const fullIndex = stops.indexOf(s);
+    const idx = fullIndex >= 0 ? fullIndex : i;
+    const wx = weatherForStopName(s.label || s.name);
     const marker = L.marker([s.lat, s.lon], {
-      icon: numberIcon(fullIndex >= 0 ? fullIndex + 1 : i + 1),
-    }).bindPopup(`<strong>${s.label || s.name}</strong>`);
+      icon: numberIcon(idx + 1, wx && wx.icon),
+    }).bindPopup(stopPopupHtml(s), {
+      maxWidth: 280,
+      className: "trip-map-popup",
+    });
     marker.addTo(markersLayer);
-    markerByIndex[fullIndex >= 0 ? fullIndex : i] = marker;
+    markerByIndex[idx] = marker;
   });
 
   const routeCoords = data.route && data.route.coordinates;
@@ -437,6 +583,7 @@ function drawGeometry(data) {
     }
   });
   setTimeout(bumpMapSize, 250);
+  schedulePlacesOnMap();
 }
 
 function mergeLinks(target, links) {
@@ -447,6 +594,141 @@ function mergeLinks(target, links) {
     if (!key || seen.has(key)) continue;
     seen.add(key);
     target.push(link);
+  }
+}
+
+function schedulePlacesOnMap() {
+  clearTimeout(placesTimer);
+  placesTimer = setTimeout(refreshPlacesOnMap, 450);
+}
+
+function stopCoordsList() {
+  const geoStops = (tripState.geometry && tripState.geometry.stops) || [];
+  return geoStops.filter((s) => s.lat != null && s.lon != null);
+}
+
+function nearAnyStop(lat, lon, maxKm = 180) {
+  const stops = stopCoordsList();
+  if (!stops.length) return true;
+  for (const s of stops) {
+    const dlat = (lat - s.lat) * 111;
+    const dlon = (lon - s.lon) * 111 * Math.cos((s.lat * Math.PI) / 180);
+    const km = Math.sqrt(dlat * dlat + dlon * dlon);
+    if (km <= maxKm) return true;
+  }
+  return false;
+}
+
+/** Approx distance to OSRM polyline (for on-the-way midway POIs). */
+function nearRouteLine(lat, lon, maxKm = 45) {
+  const coords =
+    tripState.geometry &&
+    tripState.geometry.route &&
+    tripState.geometry.route.coordinates;
+  if (!coords || coords.length < 2) return false;
+  const step = Math.max(1, Math.floor(coords.length / 80));
+  let best = Infinity;
+  for (let i = 0; i < coords.length; i += step) {
+    const c = coords[i];
+    if (!c || c.length < 2) continue;
+    const dlat = (lat - c[0]) * 111;
+    const dlon = (lon - c[1]) * 111 * Math.cos((c[0] * Math.PI) / 180);
+    const km = Math.sqrt(dlat * dlat + dlon * dlon);
+    if (km < best) best = km;
+    if (best <= maxKm) return true;
+  }
+  return best <= maxKm;
+}
+
+function keepPoiOnMap(p) {
+  if (p.lat == null || p.lon == null) return false;
+  if (p.along_route || p.on_the_way) {
+    return nearAnyStop(p.lat, p.lon, 280) || nearRouteLine(p.lat, p.lon, 50);
+  }
+  return nearAnyStop(p.lat, p.lon, 200);
+}
+
+async function refreshPlacesOnMap() {
+  initMap();
+  if (!map || !placesLayer || typeof L === "undefined") return;
+  placesLayer.clearLayers();
+
+  // Prefer OSM POIs with real coordinates
+  const osmPois = (tripState.pois || []).filter(
+    (p) => p && p.lat != null && p.lon != null
+  );
+  for (const p of osmPois.slice(0, 28)) {
+    if (!keepPoiOnMap(p)) continue;
+    const url = (p.osm_url || "").trim();
+    const where = p.on_the_way
+      ? `On the way · ${p.near || ""}`
+      : p.near
+        ? `near ${p.near}`
+        : "";
+    const html = `
+      <div class="map-popup">
+        <div class="map-pop-title">${escapeHtml(p.icon || "📍")} ${escapeHtml(p.name || "Place")}</div>
+        <div class="map-pop-muted">${escapeHtml(p.category || p.kind || "")}${
+          where ? ` · ${escapeHtml(where)}` : ""
+        }${p.distance_km != null ? ` · ${escapeHtml(String(p.distance_km))} km` : ""}</div>
+        ${
+          url
+            ? `<a class="map-pop-link" href="${escapeAttr(url)}" target="_blank" rel="noopener">OpenStreetMap</a>`
+            : ""
+        }
+      </div>`;
+    L.marker([p.lat, p.lon], { icon: placeIcon(p.kind) })
+      .bindPopup(html, { maxWidth: 260, className: "trip-map-popup" })
+      .addTo(placesLayer);
+  }
+
+  // Fallback: geocode DuckDuckGo titles when no OSM pois
+  if (osmPois.length) return;
+  const links = (tripState.placesLinks || []).slice(0, 8);
+  if (!links.length) return;
+
+  const names = links.map((l) => (l.title || "").trim()).filter(Boolean);
+  const missing = names.filter((n) => !placeGeoCache[n.toLowerCase()]);
+  if (missing.length) {
+    try {
+      const res = await fetch("/api/geocode/places", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ names: missing }),
+      });
+      const data = await res.json();
+      for (const p of data.places || []) {
+        placeGeoCache[(p.query || p.name || "").toLowerCase()] = p;
+        if (p.name) placeGeoCache[p.name.toLowerCase()] = p;
+      }
+    } catch (err) {
+      console.warn("place geocode failed", err);
+    }
+  }
+
+  for (const link of links) {
+    const title = (link.title || "").trim();
+    if (!title) continue;
+    const geo =
+      placeGeoCache[title.toLowerCase()] ||
+      placeGeoCache[title.split(" - ")[0].trim().toLowerCase()];
+    if (!geo || geo.lat == null || geo.lon == null) continue;
+    if (!nearAnyStop(geo.lat, geo.lon)) continue;
+    const url = (link.url || "").trim();
+    const snip = (link.snippet || "").trim();
+    const html = `
+      <div class="map-popup">
+        <div class="map-pop-title">📍 ${escapeHtml(geo.name || title)}</div>
+        ${snip ? `<div class="map-pop-muted">${escapeHtml(snip.slice(0, 140))}</div>` : ""}
+        ${
+          url
+            ? `<a class="map-pop-link" href="${escapeAttr(url)}" target="_blank" rel="noopener">Open reference</a>`
+            : ""
+        }
+      </div>`;
+    L.marker([geo.lat, geo.lon], { icon: placeIcon("places") })
+      .bindPopup(html, { maxWidth: 260, className: "trip-map-popup" })
+      .addTo(placesLayer);
   }
 }
 
@@ -499,6 +781,29 @@ function ingestCards(cards) {
     if (card.type === "lodging" && Array.isArray(card.links)) {
       mergeLinks(tripState.lodgingLinks, card.links);
     }
+    if (
+      (card.type === "places" || card.type === "lodging") &&
+      Array.isArray(card.pois) &&
+      card.pois.length
+    ) {
+      const seen = new Set(
+        (tripState.pois || []).map(
+          (p) => `${(p.name || "").toLowerCase()}|${p.lat}|${p.lon}`
+        )
+      );
+      for (const p of card.pois) {
+        if (!p || p.lat == null || p.lon == null) continue;
+        const key = `${(p.name || "").toLowerCase()}|${p.lat}|${p.lon}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        tripState.pois.push(p);
+      }
+      schedulePlacesOnMap();
+      if (tripState.geometry) drawGeometry(tripState.geometry);
+    } else if (card.type === "places" && Array.isArray(card.links)) {
+      schedulePlacesOnMap();
+      if (tripState.geometry) drawGeometry(tripState.geometry);
+    }
     if (card.type === "map") {
       tripState.mapCards.push(card);
       if (card.origin && card.destination) {
@@ -526,30 +831,59 @@ function hasSummaryContent() {
     tripState.weatherCards.length > 0 ||
     tripState.placesLinks.length > 0 ||
     tripState.lodgingLinks.length > 0 ||
+    (tripState.pois && tripState.pois.length > 0) ||
     tripState.mapCards.length > 0 ||
     (tripState.geometry && tripState.geometry.route)
   );
 }
 
 function renderLinkList(links) {
-  if (!links.length) {
+  if (!links.length && !(tripState.pois || []).length) {
     return '<p class="summary-empty">Nothing here yet — ask in chat.</p>';
   }
-  const items = links
-    .slice(0, 12)
-    .map((link) => {
-      const title = (link.title || link.url || "Link").trim();
-      const url = (link.url || "").trim();
-      const sn = link.snippet
-        ? `<span class="card-link-snippet">${escapeHtml(link.snippet)}</span>`
-        : "";
-      if (url) {
-        return `<li><a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a>${sn}</li>`;
-      }
-      return `<li>${escapeHtml(title)}${sn}</li>`;
-    })
-    .join("");
-  return `<ol class="card-links">${items}</ol>`;
+  let html = "";
+  if ((tripState.pois || []).length) {
+    const pois = tripState.pois
+      .slice(0, 12)
+      .map((p) => {
+        const title = escapeHtml(`${p.icon || "📍"} ${p.name || "Place"}`);
+        const meta = escapeHtml(
+          [
+            p.on_the_way ? "on the way" : "",
+            p.category || p.kind,
+            p.near,
+            p.distance_km != null ? `${p.distance_km} km` : "",
+          ]
+            .filter(Boolean)
+            .join(" · ")
+        );
+        const url = (p.osm_url || "").trim();
+        if (url) {
+          return `<li><a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${title}</a><span class="card-link-snippet">${meta}</span></li>`;
+        }
+        return `<li>${title}<span class="card-link-snippet">${meta}</span></li>`;
+      })
+      .join("");
+    html += `<p class="summary-label">Along the route (OpenStreetMap)</p><ol class="card-links">${pois}</ol>`;
+  }
+  if (links.length) {
+    const items = links
+      .slice(0, 12)
+      .map((link) => {
+        const title = (link.title || link.url || "Link").trim();
+        const url = (link.url || "").trim();
+        const sn = link.snippet
+          ? `<span class="card-link-snippet">${escapeHtml(link.snippet)}</span>`
+          : "";
+        if (url) {
+          return `<li><a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a>${sn}</li>`;
+        }
+        return `<li>${escapeHtml(title)}${sn}</li>`;
+      })
+      .join("");
+    html += `<p class="summary-label">Web references</p><ol class="card-links">${items}</ol>`;
+  }
+  return html;
 }
 
 function escapeHtml(s) {
@@ -677,14 +1011,115 @@ function renderTripSummary() {
   summaryBody.innerHTML = html;
 }
 
-function appendMessage(role, text, cards = []) {
+function renderMarkdown(text) {
+  let s = escapeHtml(text || "");
+  s = s.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${code}</code></pre>`);
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|\n)### (.+)/g, "$1<h4>$2</h4>");
+  s = s.replace(/(^|\n)## (.+)/g, "$1<h3>$2</h3>");
+  s = s.replace(/(^|\n)# (.+)/g, "$1<h3>$2</h3>");
+  s = s.replace(/(^|\n)- (.+)/g, "$1<li>$2</li>");
+  s = s.replace(/(?:<li>.*<\/li>\n?)+/g, (block) => `<ul>${block}</ul>`);
+  s = s.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener">$1</a>'
+  );
+  s = s.replace(/\n{2,}/g, "</p><p>");
+  s = s.replace(/\n/g, "<br>");
+  return `<p>${s}</p>`;
+}
+
+function saveThreadSnapshot() {
+  try {
+    const msgs = [];
+    thread.querySelectorAll(".msg").forEach((el) => {
+      if (el.classList.contains("thinking")) return;
+      const role = el.classList.contains("user")
+        ? "user"
+        : el.classList.contains("system")
+          ? "system"
+          : "assistant";
+      const body = el.querySelector(".msg-body");
+      const text = body ? body.innerText || body.textContent || "" : "";
+      if (text) msgs.push({ role, text });
+    });
+    localStorage.setItem(
+      THREAD_KEY,
+      JSON.stringify({
+        session_id: getSessionId(),
+        messages: msgs.slice(-40),
+        tripState,
+        tripPrefs,
+      })
+    );
+    if (lastUserMessage) localStorage.setItem(LAST_USER_KEY, lastUserMessage);
+  } catch {
+    /* ignore */
+  }
+}
+
+function restoreThreadSnapshot() {
+  try {
+    const raw = localStorage.getItem(THREAD_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    if (data.session_id) setSessionId(data.session_id);
+    if (data.tripState) Object.assign(tripState, data.tripState);
+    if (data.tripPrefs) Object.assign(tripPrefs, data.tripPrefs);
+    lastUserMessage = localStorage.getItem(LAST_USER_KEY) || "";
+    thread.innerHTML = "";
+    for (const m of data.messages || []) {
+      appendMessage(m.role, m.text, [], { persist: false });
+    }
+    if (regenBtn) regenBtn.hidden = !lastUserMessage;
+    renderSpine();
+    renderPrefs();
+    renderTripSummary();
+    return (data.messages || []).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function setRuntimeChip(data) {
+  if (!runtimeChip) return;
+  const mode = (data && data.runtime_mode) || "auto";
+  const label =
+    (data && data.runtime_mode_label) ||
+    (mode === "local"
+      ? "Local GPU"
+      : mode === "cloud"
+        ? "Cloud"
+        : "Auto");
+  runtimeChip.textContent = label;
+  runtimeChip.dataset.mode = mode;
+}
+
+function setBusy(busy) {
+  sendBtn.disabled = busy;
+  if (stopBtn) stopBtn.hidden = !busy;
+  if (regenBtn) regenBtn.hidden = busy || !lastUserMessage;
+  if (statusBar) statusBar.classList.toggle("hidden", !busy);
+}
+
+function setStatusLabel(label) {
+  if (statusText) statusText.textContent = label || "Working…";
+  if (statusBar) statusBar.classList.remove("hidden");
+}
+
+function appendMessage(role, text, cards = [], opts = {}) {
   const el = document.createElement("div");
   el.className = `msg ${role}`;
 
   if (text) {
     const body = document.createElement("div");
     body.className = "msg-body";
-    body.textContent = text;
+    if (role === "assistant") {
+      body.innerHTML = renderMarkdown(text);
+    } else {
+      body.textContent = text;
+    }
     el.appendChild(body);
   }
 
@@ -701,7 +1136,22 @@ function appendMessage(role, text, cards = []) {
 
   thread.appendChild(el);
   thread.scrollTop = thread.scrollHeight;
+  if (opts.persist !== false) saveThreadSnapshot();
   return el;
+}
+
+function ensureStreamingMessage() {
+  if (streamingBodyEl && streamingBodyEl.isConnected) return streamingBodyEl;
+  const el = document.createElement("div");
+  el.className = "msg assistant";
+  el.id = "streamingMsg";
+  const body = document.createElement("div");
+  body.className = "msg-body streaming";
+  body.innerHTML = "";
+  el.appendChild(body);
+  thread.appendChild(el);
+  streamingBodyEl = body;
+  return body;
 }
 
 function resolveActivity(label) {
@@ -931,12 +1381,46 @@ async function loadSettings() {
       : "Not set yet";
     if (groqHint) {
       groqHint.textContent = data.groq_api_key_set
-        ? `Saved (${data.groq_api_key_hint}) — used when Gemini is busy`
-        : "Optional — paste your Groq gsk_ key (also read from grok_key in .env)";
+        ? `Saved (${data.groq_api_key_hint}) — used in Cloud / Auto`
+        : "Optional — paste your Groq gsk_ key";
+    }
+    if (runtimeModeSelect) {
+      runtimeModeSelect.value = data.runtime_mode || "auto";
+    }
+    if (runtimeModeHint) {
+      const cands = (data.model_candidates || []).slice(0, 4).join(" → ");
+      runtimeModeHint.textContent = cands
+        ? `Active order: ${cands}${(data.model_candidates || []).length > 4 ? "…" : ""}`
+        : data.runtime_mode_label || "";
+    }
+    if (ollamaBaseInput) {
+      ollamaBaseInput.value = data.ollama_api_base || "";
+    }
+    if (ollamaModelInput) {
+      ollamaModelInput.value = data.ollama_model || "";
+    }
+    if (ollamaFallbacksInput) {
+      ollamaFallbacksInput.value = data.ollama_model_fallbacks || "";
+    }
+    if (ollamaBaseHint) {
+      ollamaBaseHint.textContent = data.ollama_configured
+        ? "Ollama ready for Local / Auto fallback"
+        : "Set URL + model for local GPU";
+    }
+    if (ollamaModelHint) {
+      ollamaModelHint.textContent = data.ollama_model
+        ? "Prefer a tool-capable tag (e.g. llama3-groq-tool-use)"
+        : "Example: ollama/llama3-groq-tool-use:latest";
+    }
+    if (ollamaFallbacksHint) {
+      ollamaFallbacksHint.textContent = data.ollama_model_fallbacks
+        ? "Tried if the primary Ollama model fails"
+        : "Optional comma-separated list";
     }
     mapsHint.textContent = data.google_maps_api_key_set
       ? `Saved (${data.google_maps_api_key_hint}) — paste a new key to replace`
       : "Optional — without it you still get an Open-in-Maps link";
+    setRuntimeChip(data);
     updateKeyBanner(data);
   } catch (err) {
     geminiHint.textContent = "Could not load settings";
@@ -944,10 +1428,25 @@ async function loadSettings() {
 }
 
 function updateKeyBanner(data) {
-  if (!data.google_api_key_set && !data.groq_api_key_set) {
+  const mode = data.runtime_mode || "auto";
+  const hasCloud = data.google_api_key_set || data.groq_api_key_set;
+  const hasLocal = data.ollama_configured;
+  let ok = true;
+  let msg = "";
+  if (mode === "local" && !hasLocal) {
+    ok = false;
+    msg = "Local mode needs Ollama URL + model in Settings.";
+  } else if (mode === "cloud" && !hasCloud) {
+    ok = false;
+    msg = "Cloud mode needs a Gemini or Groq key in Settings.";
+  } else if (!hasCloud && !hasLocal) {
+    ok = false;
+    msg =
+      "Add a Gemini / Groq key or configure Ollama in Settings before chatting.";
+  }
+  if (!ok) {
     keyBanner.classList.remove("hidden");
-    keyBanner.innerHTML =
-      'Add a <strong>Gemini</strong> and/or <strong>Groq</strong> key in Settings before chatting.';
+    keyBanner.innerHTML = msg;
   } else {
     keyBanner.classList.add("hidden");
     keyBanner.textContent = "";
@@ -1025,11 +1524,27 @@ settingsForm.addEventListener("submit", async (event) => {
   const gemini = geminiInput.value.trim();
   const maps = mapsInput.value.trim();
   const groq = groqInput ? groqInput.value.trim() : "";
+  const ollamaBase = ollamaBaseInput ? ollamaBaseInput.value.trim() : "";
+  const ollamaModel = ollamaModelInput ? ollamaModelInput.value.trim() : "";
+  const ollamaFallbacks = ollamaFallbacksInput
+    ? ollamaFallbacksInput.value.trim()
+    : "";
   if (gemini) payload.google_api_key = gemini;
   if (maps) payload.google_maps_api_key = maps;
   if (groq) payload.groq_api_key = groq;
-  if (!payload.google_api_key && !payload.google_maps_api_key && !payload.groq_api_key) {
-    settingsStatus.textContent = "Paste at least one key to save.";
+  if (runtimeModeSelect) payload.runtime_mode = runtimeModeSelect.value;
+  if (ollamaBaseInput) payload.ollama_api_base = ollamaBase;
+  if (ollamaModelInput) payload.ollama_model = ollamaModel;
+  if (ollamaFallbacksInput) payload.ollama_model_fallbacks = ollamaFallbacks;
+  if (
+    !payload.google_api_key &&
+    !payload.google_maps_api_key &&
+    !payload.groq_api_key &&
+    !payload.runtime_mode &&
+    !ollamaBaseInput &&
+    !ollamaModelInput
+  ) {
+    settingsStatus.textContent = "Change a setting to save.";
     return;
   }
 
@@ -1057,10 +1572,39 @@ settingsForm.addEventListener("submit", async (event) => {
 
 newTripBtn.addEventListener("click", () => {
   clearSession();
+  try {
+    localStorage.removeItem(THREAD_KEY);
+    localStorage.removeItem(LAST_USER_KEY);
+  } catch (_) {}
+  lastUserMessage = "";
+  streamingBodyEl = null;
   thread.innerHTML = "";
   resetTripState();
   welcome();
+  if (regenBtn) regenBtn.hidden = true;
 });
+
+async function stopChat() {
+  const sid = getSessionId();
+  if (streamAbort) {
+    try {
+      streamAbort.abort();
+    } catch (_) {}
+  }
+  if (sid) {
+    try {
+      await fetch("/api/chat/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid }),
+      });
+    } catch (_) {}
+  }
+  setBusy(false);
+  removeThinking();
+  setStatusLabel("Stopped");
+  if (statusBar) setTimeout(() => statusBar.classList.add("hidden"), 800);
+}
 
 async function sendViaStream(message) {
   const stops = (tripState.routeStops.length
@@ -1083,9 +1627,17 @@ async function sendViaStream(message) {
   };
 
   showThinking();
+  setBusy(true);
+  setStatusLabel("Thinking…");
+  streamingBodyEl = null;
+  streamAbort = new AbortController();
+  let streamedText = "";
+  let gotDone = false;
+
   const res = await fetch("/api/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: streamAbort.signal,
     body: JSON.stringify({
       message,
       session_id: getSessionId(),
@@ -1095,6 +1647,7 @@ async function sendViaStream(message) {
 
   if (!res.ok) {
     removeThinking();
+    setBusy(false);
     let detail = "Something went wrong.";
     try {
       const data = await res.json();
@@ -1127,17 +1680,46 @@ async function sendViaStream(message) {
       } catch {
         continue;
       }
+      if (event.session_id) setSessionId(event.session_id);
       if (event.type === "status") {
-        if (event.session_id) setSessionId(event.session_id);
         updateThinking(event.label || "Working…");
-      } else if (event.type === "done") {
+        setStatusLabel(event.label || "Working…");
+      } else if (event.type === "card" && event.card) {
+        ingestCards([event.card]);
+      } else if (event.type === "token") {
         removeThinking();
-        if (event.session_id) setSessionId(event.session_id);
-        appendMessage("assistant", event.reply || "", event.cards || []);
+        streamedText += event.text || "";
+        const body = ensureStreamingMessage();
+        body.innerHTML = renderMarkdown(streamedText);
+        thread.scrollTop = thread.scrollHeight;
+      } else if (event.type === "done") {
+        gotDone = true;
+        removeThinking();
+        const finalReply = event.reply || streamedText || "";
+        const existing = document.getElementById("streamingMsg");
+        if (existing) existing.remove();
+        streamingBodyEl = null;
+        appendMessage("assistant", finalReply, event.cards || []);
       }
     }
   }
   removeThinking();
+  if (!gotDone) {
+    const existing = document.getElementById("streamingMsg");
+    if (existing) existing.remove();
+    streamingBodyEl = null;
+    if (streamedText) {
+      appendMessage("assistant", streamedText);
+    } else {
+      appendMessage(
+        "assistant",
+        "The connection closed before the trip reply finished. " +
+          "Send the same message again — places search is now fail-fast if Overpass is slow."
+      );
+    }
+  }
+  setBusy(false);
+  if (statusBar) statusBar.classList.add("hidden");
 }
 
 form.addEventListener("submit", async (event) => {
@@ -1145,21 +1727,58 @@ form.addEventListener("submit", async (event) => {
   const message = input.value.trim();
   if (!message) return;
 
+  lastUserMessage = message;
   appendMessage("user", message);
   input.value = "";
-  sendBtn.disabled = true;
 
   try {
     await sendViaStream(message);
   } catch (err) {
     removeThinking();
-    appendMessage("assistant", `Network error: ${err.message}`);
+    setBusy(false);
+    if (err && err.name === "AbortError") {
+      appendMessage("assistant", "Stopped.");
+    } else {
+      const msg = (err && err.message) || String(err) || "unknown";
+      appendMessage(
+        "assistant",
+        `Connection dropped while the agent was working (${msg}). ` +
+          "Often Overpass/search was slow — send the same message again, " +
+          "or switch Runtime to Local in Settings."
+      );
+    }
   } finally {
-    sendBtn.disabled = false;
+    setBusy(false);
     input.focus();
   }
 });
 
+if (stopBtn) {
+  stopBtn.addEventListener("click", () => {
+    stopChat();
+  });
+}
+
+if (regenBtn) {
+  regenBtn.addEventListener("click", async () => {
+    if (!lastUserMessage || sendBtn.disabled) return;
+    appendMessage("user", lastUserMessage);
+    try {
+      await sendViaStream(lastUserMessage);
+    } catch (err) {
+      removeThinking();
+      setBusy(false);
+      if (err && err.name === "AbortError") {
+        appendMessage("assistant", "Stopped.");
+      } else {
+        appendMessage(
+          "assistant",
+          `Connection dropped (${(err && err.message) || "network"}). Try again.`
+        );
+      }
+    }
+  });
+}
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     const panel = btn.dataset.panel;
@@ -1185,7 +1804,9 @@ loadPrefsFromStorage();
 renderSpine();
 renderPrefs();
 renderTripSummary();
-welcome();
+if (!restoreThreadSnapshot()) {
+  welcome();
+}
 loadSettings();
 input.focus();
 

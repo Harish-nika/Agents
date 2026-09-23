@@ -4,31 +4,49 @@
 
 Multi-agent travel assistant that understands multi-stop trips from natural language, updates a live **trip board + map**, and delegates climate / places / stays to specialist agents. Built for a mostly free stack (Open-Meteo, DuckDuckGo, OSM/OSRM, optional Groq).
 
-**Stack:** FastAPI · Google ADK · Gemini (primary) · [Groq](https://console.groq.com) fallback · Leaflet · Open-Meteo · DuckDuckGo · OSRM
+**Stack:** FastAPI · Google ADK · Gemini (primary) · [Groq](https://console.groq.com) fallback · Ollama (local GPU last resort) · Leaflet · Open-Meteo · DuckDuckGo · OSRM
 
 **Repository:** [github.com/Harish-nika/Agents](https://github.com/Harish-nika/Agents)
 
 ---
 
-## Models: Gemini first, Groq fallback
+## Models: Gemini → Groq → Ollama
 
-**Yes — Gemini is always tried first; Groq is the fallback.**
+**Yes — Gemini is tried first; Groq next; your server Ollama is last resort** (when cloud keys are exhausted, rate-limited, busy, or dump a tool plan instead of calling tools).
 
 Default failover order in `trip_planner/config.py` → `model_candidates()`:
 
 | Order | Model | Role |
 |-------|--------|------|
-| 1 | `gemini-3.6-flash` | Primary (AI Studio) |
+| 1 | `gemini-2.0-flash` (or `TRIP_PLANNER_MODEL`) | Primary (AI Studio) |
 | 2 | `gemini-flash-latest` | Gemini fallback |
 | 3 | `gemini-2.0-flash` | Gemini fallback |
-| 4 | `groq/qwen/qwen3.8-27b` | Groq tool-capable fallback (~27B) |
-| 5 | `groq/openai/gpt-oss-20b` | Groq last resort |
+| 4 | `groq/llama-3.3-70b-versatile` | Groq tool-capable fallback |
+| 5 | `groq/llama-3.1-8b-instant` / `groq/openai/gpt-oss-20b` | Groq last resorts |
+| 6 | `ollama/llama3-groq-tool-use:latest` | Local GPU (tool-capable) |
+| 7 | `ollama/llama3.1:latest` | Local GPU backup |
 
 - Groq runs only if `GROQ_API_KEY` or `grok_key` is set.
-- Chat service retries the next model on **503 / busy / not found / rate limit**.
+- Ollama runs only if `OLLAMA_API_BASE` **and** `OLLAMA_MODEL` (or fallbacks) are set.
+- Chat service retries the next model on **503 / busy / not found / rate limit / timeout / tool-plan leak**.
+- Set `TRIP_PLANNER_SKIP_GEMINI=1` to skip Gemini when free-tier quota is gone.
+- Set `TRIP_PLANNER_PREFER_OLLAMA=1` to try your GPU box **before** cloud APIs.
 - **`groq/compound` is not an agent model** (no OpenAI-style tool calling). It is used only via the `compound_research` tool when your Groq project allows Compound’s underlying models.
 
-Retired Gemini IDs (`gemini-1.5-*`, `gemini-2.5-flash`) are skipped automatically.
+Retired Gemini IDs (`gemini-1.5-*`, `gemini-2.5-flash`, `gemini-3.6-flash`) are skipped automatically.
+
+### Ollama on this GPU box
+
+With models already pulled (`ollama list`):
+
+```bash
+# .env (also editable in Settings)
+OLLAMA_API_BASE=http://127.0.0.1:11434
+OLLAMA_MODEL=ollama/llama3-groq-tool-use:latest
+OLLAMA_MODEL_FALLBACKS=ollama/llama3.1:latest
+```
+
+Prefer **`llama3-groq-tool-use`** for ADK AgentTools; plain `llama3.1` is a backup. Ollama attempts wait up to `TRIP_PLANNER_OLLAMA_TIMEOUT_S` (default **120s**) because cold GPU loads are slower.
 
 ---
 
@@ -63,6 +81,7 @@ After tools run: left spine shows ordered stops (Bangalore → Gokarna → Jog F
 | Agent runtime | [Google ADK](https://google.github.io/adk-docs/) (`Agent`, `AgentTool`, `Runner`) |
 | Primary LLM | Google Gemini (AI Studio / `GOOGLE_API_KEY`) |
 | Fallback LLM | Groq via ADK LiteLLM (`grok_key` / `GROQ_API_KEY`) |
+| Last-resort LLM | Local Ollama (`OLLAMA_API_BASE` + `OLLAMA_MODEL`) |
 | API | FastAPI + SSE (`/api/chat/stream`) |
 | UI | Static HTML/CSS/JS — three-column shell |
 | Map | Leaflet + OpenStreetMap tiles |
@@ -103,7 +122,7 @@ Live chat path uses **one orchestrator + three specialist agents** wired as **AD
 flowchart TB
   user[User_chat_message]
   api[FastAPI_SSE_/api/chat/stream]
-  models[Model_failover_Gemini_then_Groq]
+  models[Model_failover_Gemini_then_Groq_then_Ollama]
   orch[trip_guide_orchestrator]
   board[publish_trip_board]
   prefs[publish_trip_prefs]
@@ -139,7 +158,7 @@ flowchart TB
 5. Same turn: **`weather_specialist`** and/or **`places_specialist`** (and stays if asked).
 6. Cards stream into chat (weather timeline, places with **clickable reference links**).
 7. Orchestrator writes a short merged answer and offers one next step.
-8. If Gemini fails (503/retired), chat service retries Gemini fallbacks, then Groq.
+8. If Gemini fails (503/retired/quota), chat service retries Gemini fallbacks, then Groq, then Ollama.
 
 ---
 
@@ -155,8 +174,8 @@ flowchart TB
 | **Preferences** | Session budget / pace / vibe / interests / companions |
 | **Citations** | Place/food/lodging cards with DuckDuckGo URLs |
 | **Streaming UX** | Status: Updating trip board… Checking climate… Searching places… |
-| **Settings** | Gemini + Groq + Maps keys saved to server `.env` |
-| **Model resilience** | Gemini → Gemini fallbacks → Groq Qwen → Groq gpt-oss |
+| **Settings** | Gemini + Groq + Maps + Ollama URL/model saved to server `.env` |
+| **Model resilience** | Gemini → Groq → Ollama (tool-capable local GPU) |
 | **Free tools** | Weather, search, OSM tiles, OSRM — no Maps JS billing required for the side map |
 
 ---
@@ -187,18 +206,19 @@ cd Agents/Trip_planner-agent
 - Python 3.10+ (`requirements.txt` includes `google-adk`)
 - [Google AI Studio](https://aistudio.google.com/apikey) key (Gemini)
 - Optional: [Groq](https://console.groq.com/keys) key (`gsk_…` / `grok_key`)
+- Optional: [Ollama](https://ollama.com) on this (or another) GPU host — pull a tool-capable model
 - Optional: Google Maps key for detailed Directions steps
 
 ### 3. Secrets (never commit)
 
 ```bash
 cp .env.example .env
-# Set GOOGLE_API_KEY at minimum; add grok_key for Groq fallback
+# Set GOOGLE_API_KEY at minimum; add grok_key for Groq; Ollama is pre-filled for local GPU
 ```
 
 | File | Purpose | In git? |
 |------|---------|---------|
-| `.env` | Gemini, Groq, Maps | **No** |
+| `.env` | Gemini, Groq, Maps, Ollama | **No** |
 | `.env.example` | Placeholders | Yes |
 
 ### 4. Run
@@ -245,7 +265,7 @@ PYTHONPATH=. python -m trip_planner.main --list-routes
 | `trip_planner/api/app.py` | FastAPI chat + geometry + static UI |
 | `trip_planner/runtime/chat_service.py` | Sessions, SSE, model failover |
 | `trip_planner/tools/` | Weather, maps, search, board, prefs, Compound |
-| `trip_planner/config.py` | Gemini + Groq model candidates |
+| `trip_planner/config.py` | Gemini + Groq + Ollama model candidates |
 | `web/` | Three-column UI (Leaflet) |
 | `page_images/` | README screenshots |
 | `trip_planner/workflows/` | Legacy Sequential / Parallel / Loop demos |
